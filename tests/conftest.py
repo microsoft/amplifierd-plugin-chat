@@ -17,7 +17,8 @@ def state():
 
 
 @pytest.fixture
-def app(state):
+def app(state, tmp_path, monkeypatch):
+    monkeypatch.setenv("CHAT_PLUGIN_HOME_DIR", str(tmp_path))
     app = FastAPI()
     app.state = state
     router = create_router(state)
