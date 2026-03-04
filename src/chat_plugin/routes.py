@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Response
 
+from chat_plugin.commands import CommandProcessor
 from chat_plugin.pin_storage import PinStorage
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -25,6 +26,24 @@ def create_pin_routes(pin_storage: PinStorage) -> APIRouter:
     async def unpin_session(session_id: str):
         pin_storage.remove(session_id)
         return {"pinned": False, "session_id": session_id}
+
+    return router
+
+
+def create_command_routes(processor: CommandProcessor) -> APIRouter:
+    router = APIRouter(prefix="/chat", tags=["chat-commands"])
+
+    @router.post("/command")
+    async def dispatch_command(body: dict):
+        session_id = body.get("session_id")
+        text = body.get("command", body.get("text", ""))
+        action, data = processor.process_input(text)
+        if action == "command":
+            result = processor.handle_command(
+                data["command"], data["args"], session_id=session_id
+            )
+            return result
+        return {"type": "prompt", "data": data}
 
     return router
 
