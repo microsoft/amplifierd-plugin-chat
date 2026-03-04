@@ -1,0 +1,28 @@
+[project]
+name = "amplifierd-plugin-chat"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-anyio", "httpx"]
+
+[project.entry-points."amplifierd.plugins"]
+chat = "chat_plugin:create_router"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chat_plugin"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
