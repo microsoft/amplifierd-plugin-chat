@@ -1581,7 +1581,7 @@
     if (command === 'modes' && result.type === 'modes') {
       const modes = result.modes || [];
       const active = result.active_mode;
-      if (!modes.length) return { text: 'No modes available' };
+      if (!modes.length) return { html: '<pre>' + h('Modes') + ' ' + d('(none available)') + '</pre>', cssClass: 'config-result' };
       const lines = [h('Modes') + (active ? ' ' + d('active: ' + active) : '')];
       // Group by source
       const groups = {};

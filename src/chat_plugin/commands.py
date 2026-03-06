@@ -23,7 +23,9 @@ COMMANDS: list[CommandDef] = [
     CommandDef("mode", "Activate/deactivate a mode", "/mode <name> [on|off]"),
     CommandDef("rename", "Rename the session", "/rename <name>"),
     CommandDef("fork", "Fork session at a turn", "/fork [turn]"),
-    CommandDef("bundle", "Switch to a different bundle (coming soon)", "/bundle <name>"),
+    CommandDef(
+        "bundle", "Switch to a different bundle (coming soon)", "/bundle <name>"
+    ),
 ]
 
 
@@ -99,15 +101,14 @@ class CommandProcessor:
         if not handle:
             return self._error("No active session")
         try:
-            tools = handle.session.coordinator.get("tools")
-            tool_list = (
-                [
-                    {"name": t.name, "description": getattr(t, "description", "")}
-                    for t in tools
-                ]
-                if tools
-                else []
-            )
+            # coordinator.get("tools") returns a dict {name: tool_object},
+            # not a list — iterating it directly yields only string keys.
+            # Mirror the pattern used in routes/sessions.py list_tools().
+            tools: dict = handle.session.coordinator.get("tools") or {}
+            tool_list = [
+                {"name": name, "description": getattr(tool, "description", "")}
+                for name, tool in tools.items()
+            ]
         except Exception:
             tool_list = []
         # B1: Flatten — frontend reads result.tools directly
