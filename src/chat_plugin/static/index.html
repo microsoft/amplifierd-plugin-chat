@@ -1435,6 +1435,9 @@
         if (p.arguments == null && p.tool_input != null) {
           p.arguments = p.tool_input;
         }
+        // E4: Explicitly surface lineage fields so tool_call handler can use them
+        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
+        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       case 'tool:post': {
         const result = p.result;
@@ -1443,11 +1446,17 @@
           p.error = result.error || null;
           p.success = !result.error;
         }
+        // E4: Explicitly surface lineage fields
+        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
+        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       }
       case 'tool:error':
         if (p.success == null) p.success = false;
         if (p.error == null) p.error = p.message || 'Unknown error';
+        // E4: Explicitly surface lineage fields
+        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
+        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       case 'llm:response': {
         const usage = p.usage || {};
@@ -2732,6 +2741,7 @@
     const localIndexRef = useRef(0);
     const toolMapRef = useRef({});
     const childToToolRef = useRef({});
+    const pendingDelegatesRef = useRef([]); // E3: tracks in-flight delegate/task tool_call_ids
     const childAgentRef = useRef({});
     const sessionParentByIdRef = useRef({});
     const activeKeyRef = useRef(null);
@@ -3249,6 +3259,11 @@
           const subAgentName = originSessionId ? childAgentRef.current[originSessionId] : null;
           const isSubAgentTool = !!originParentId || !!(originSessionId && childToToolRef.current[originSessionId]);
           toolMapRef.current[msg.tool_call_id] = itemId;
+          // E3: Record delegate/task tool calls so session_fork can correlate them
+          // even when parent_tool_call_id is absent from the kernel event.
+          if (msg.tool_name === 'delegate' || msg.tool_name === 'task') {
+            pendingDelegatesRef.current.push(msg.tool_call_id);
+          }
           setChronoItems(prev => [...prev, {
             id: itemId, type: 'tool_call',
             toolName: msg.tool_name, toolCallId: msg.tool_call_id,
@@ -3276,7 +3291,12 @@
         }
 
         case 'session_fork': {
-          const parentToolId = toolMapRef.current[msg.parent_tool_call_id];
+          // E3: Use parent_tool_call_id from the event if present; otherwise fall back
+          // to the oldest pending delegate/task tool call (FIFO correlation).
+          const forkParentCallId = msg.parent_tool_call_id
+            || pendingDelegatesRef.current.shift()
+            || null;
+          const parentToolId = forkParentCallId ? toolMapRef.current[forkParentCallId] : null;
           const childId = typeof msg.child_id === 'string' ? msg.child_id : null;
           applySessionForkLineage(msg);
           if (parentToolId) {
@@ -3343,6 +3363,7 @@
           blockMapRef.current = {};
           cycleRef.current = 0;
           localIndexRef.current = 0;
+          pendingDelegatesRef.current = []; // E3: clear on turn completion
           break;
 
         case 'execution_cancelled':
@@ -4115,6 +4136,8 @@
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
+      pendingDelegatesRef.current = []; // E3: clear on session switch
+      pendingDelegatesRef.current = []; // E3: clear on session switch
 
       // Close previous SSE if any
       if (sseRef.current) {
@@ -4417,6 +4440,7 @@
       blockMapRef.current = {};
       cycleRef.current = 0;
       localIndexRef.current = 0;
+      pendingDelegatesRef.current = []; // E3: clear on session switch
       const queued = pendingEventsRef.current.get(key);
       if (queued && queued.length > 0) {
         pendingEventsRef.current.delete(key);

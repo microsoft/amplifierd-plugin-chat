@@ -79,7 +79,8 @@ def test_process_input_non_command(processor):
 def test_help_command(processor):
     result = processor.handle_command("help", [], session_id=None)
     assert result["type"] == "help"
-    assert len(result["data"]["commands"]) > 0
+    # B1: flattened — commands lives at top level, not under data
+    assert len(result["commands"]) > 0
 
 
 def test_unknown_command(processor):
@@ -96,19 +97,22 @@ def test_command_endpoint(client):
 def test_status_command_no_session(processor):
     result = processor.handle_command("status", [], session_id=None)
     assert result["type"] == "error"
-    assert "no active session" in result["data"]["message"].lower()
+    # B1: error message lives at result["error"], not result["data"]["message"]
+    assert "no active session" in result["error"].lower()
 
 
 def test_cwd_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("cwd", [], session_id="abc")
     assert result["type"] == "cwd"
-    assert "working_dir" in result["data"]
+    # B1: flattened — working_dir at top level
+    assert "working_dir" in result
 
 
 def test_status_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("status", [], session_id="abc")
     assert result["type"] == "status"
-    assert "session_id" in result["data"]
+    # B1: flattened — session_id at top level
+    assert "session_id" in result
 
 
 def test_clear_command(processor_with_mock_session):
@@ -119,27 +123,42 @@ def test_clear_command(processor_with_mock_session):
 def test_tools_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("tools", [], session_id="abc")
     assert result["type"] == "tools"
+    # B1: flattened — tools list at top level
+    assert "tools" in result
 
 
 def test_agents_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("agents", [], session_id="abc")
     assert result["type"] == "agents"
+    # B1: flattened — agents list at top level
+    assert "agents" in result
 
 
 def test_config_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("config", [], session_id="abc")
     assert result["type"] == "config"
+    # B1: shape matches what formatCommandResult expects
+    assert "session" in result
+    assert "providers" in result
+    assert "tools" in result
+    assert "hooks" in result
+    assert "agents" in result
+    # agents came from {"default": {}, "coder": {}}
+    assert set(result["agents"]) == {"default", "coder"}
 
 
 def test_modes_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("modes", [], session_id="abc")
     assert result["type"] == "modes"
-    assert "modes" in result["data"]
+    # B1: flattened — modes list at top level, not under data
+    assert "modes" in result
+    assert len(result["modes"]) == 2
 
 
 def test_mode_activate(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("mode", ["debug"], session_id="abc")
-    assert result["type"] in ("mode_changed", "error")
+    # B1: type is now "mode" (not "mode_changed")
+    assert result["type"] in ("mode", "error")
 
 
 def test_mode_with_trailing_prompt(processor_with_mock_session):
@@ -147,21 +166,24 @@ def test_mode_with_trailing_prompt(processor_with_mock_session):
     result = processor_with_mock_session.handle_command(
         "mode", ["debug", "my", "problem"], session_id="abc"
     )
-    if result["type"] == "mode_changed":
-        assert result["data"].get("trailing_prompt") == "my problem"
+    # B1: type "mode" and trailing_prompt at top level
+    if result["type"] == "mode":
+        assert result.get("trailing_prompt") == "my problem"
 
 
 def test_mode_deactivate(processor_with_mock_session):
     """/mode off deactivates current mode."""
     result = processor_with_mock_session.handle_command("mode", ["off"], session_id="abc")
-    assert result["type"] == "mode_changed"
-    assert result["data"]["active_mode"] is None
+    # B1: type is "mode" and active_mode at top level
+    assert result["type"] == "mode"
+    assert result["active_mode"] is None
 
 
 def test_rename_command(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("rename", ["My", "Session"], session_id="abc")
     assert result["type"] == "renamed"
-    assert result["data"]["name"] == "My Session"
+    # B1: flattened — name at top level
+    assert result["name"] == "My Session"
 
 
 def test_fork_command_no_args(processor_with_mock_session):
@@ -173,3 +195,19 @@ def test_fork_command_no_args(processor_with_mock_session):
 def test_fork_command_with_turn(processor_with_mock_session):
     result = processor_with_mock_session.handle_command("fork", ["3"], session_id="abc")
     assert result["type"] == "forked"
+
+
+# ── B4: /bundle coming soon ───────────────────────────────────────────────────
+
+def test_bundle_command_coming_soon(processor):
+    """B4: /bundle returns an info stub with a coming-soon message."""
+    result = processor.handle_command("bundle", ["my-bundle"], session_id=None)
+    assert result["type"] == "info"
+    assert "coming soon" in result["message"].lower()
+
+
+def test_bundle_command_in_commands_list(processor):
+    """B4: /bundle appears in the /help listing."""
+    result = processor.handle_command("help", [], session_id=None)
+    names = [c["name"] for c in result["commands"]]
+    assert "/bundle" in names

@@ -23,6 +23,7 @@ COMMANDS: list[CommandDef] = [
     CommandDef("mode", "Activate/deactivate a mode", "/mode <name> [on|off]"),
     CommandDef("rename", "Rename the session", "/rename <name>"),
     CommandDef("fork", "Fork session at a turn", "/fork [turn]"),
+    CommandDef("bundle", "Switch to a different bundle (coming soon)", "/bundle <name>"),
 ]
 
 
@@ -45,10 +46,7 @@ class CommandProcessor:
     ) -> dict:
         handler = getattr(self, f"_cmd_{command}", None)
         if handler is None:
-            return {
-                "type": "error",
-                "data": {"message": f"Unknown command: /{command}"},
-            }
+            return {"type": "error", "error": f"Unknown command: /{command}"}
         return handler(args, session_id=session_id)
 
     def _require_session(self, session_id: str | None) -> Any:
@@ -60,27 +58,29 @@ class CommandProcessor:
         return self._session_manager.get(session_id)
 
     def _error(self, message: str) -> dict:
-        return {"type": "error", "data": {"message": message}}
+        # B1: Top-level "error" key so formatCommandResult's
+        # `if (result.error)` check works correctly.
+        return {"type": "error", "error": message}
 
     def _cmd_status(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
         if not handle:
             return self._error("No active session")
+        # B1: Flatten — frontend reads result.session_id, result.status, etc.
         return {
             "type": "status",
-            "data": {
-                "session_id": handle.session_id,
-                "status": str(handle.status),
-                "turn_count": handle.turn_count,
-                "bundle_name": handle.bundle_name,
-            },
+            "session_id": handle.session_id,
+            "status": str(handle.status),
+            "turn_count": handle.turn_count,
+            "bundle_name": handle.bundle_name,
         }
 
     def _cmd_cwd(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
         if not handle:
             return self._error("No active session")
-        return {"type": "cwd", "data": {"working_dir": handle.working_dir}}
+        # B1: Flatten
+        return {"type": "cwd", "working_dir": handle.working_dir}
 
     def _cmd_clear(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
@@ -91,7 +91,8 @@ class CommandProcessor:
             ctx.clear()
         except Exception:
             pass  # best effort
-        return {"type": "cleared", "data": {"session_id": session_id}}
+        # B1: Flatten
+        return {"type": "cleared", "session_id": session_id}
 
     def _cmd_tools(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
@@ -109,7 +110,8 @@ class CommandProcessor:
             )
         except Exception:
             tool_list = []
-        return {"type": "tools", "data": {"tools": tool_list}}
+        # B1: Flatten — frontend reads result.tools directly
+        return {"type": "tools", "tools": tool_list}
 
     def _cmd_agents(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
@@ -117,11 +119,23 @@ class CommandProcessor:
             return self._error("No active session")
         try:
             config = handle.session.coordinator.config
-            agents = config.get("agents", {})
-            agent_list = [{"name": name} for name in agents]
+            agents_cfg = config.get("agents", {})
+            if isinstance(agents_cfg, dict):
+                agent_list = [
+                    {
+                        "name": name,
+                        "description": info.get("description", "")
+                        if isinstance(info, dict)
+                        else "",
+                    }
+                    for name, info in agents_cfg.items()
+                ]
+            else:
+                agent_list = [{"name": str(a), "description": ""} for a in agents_cfg]
         except Exception:
             agent_list = []
-        return {"type": "agents", "data": {"agents": agent_list}}
+        # B1: Flatten — frontend reads result.agents directly
+        return {"type": "agents", "agents": agent_list}
 
     def _cmd_config(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
@@ -129,9 +143,76 @@ class CommandProcessor:
             return self._error("No active session")
         try:
             config = handle.session.coordinator.config
-            return {"type": "config", "data": {"config": dict(config)}}
+            cfg = dict(config)
         except Exception:
-            return {"type": "config", "data": {"config": {}}}
+            cfg = {}
+
+        # B1: Map raw coordinator config to the shape formatCommandResult expects:
+        #   result.session   → {orchestrator, context}
+        #   result.providers → [{module, model, priority}, ...]
+        #   result.tools     → [name, ...]   (strings)
+        #   result.hooks     → [name, ...]   (strings)
+        #   result.agents    → [name, ...]   (strings)
+        session_info = {
+            "orchestrator": cfg.get("orchestrator", "unknown"),
+            "context": cfg.get("context", "unknown"),
+        }
+
+        raw_providers = cfg.get("providers", [])
+        providers = []
+        for p in raw_providers if isinstance(raw_providers, list) else []:
+            if isinstance(p, dict):
+                providers.append(
+                    {
+                        "module": p.get("module", p.get("name", str(p))),
+                        "model": p.get("model"),
+                        "priority": p.get("priority"),
+                    }
+                )
+            else:
+                providers.append({"module": str(p), "model": None, "priority": None})
+
+        raw_tools = cfg.get("tools", [])
+        tools: list[str] = []
+        for t in raw_tools if isinstance(raw_tools, list) else []:
+            if isinstance(t, str):
+                tools.append(t)
+            elif isinstance(t, dict):
+                tools.append(t.get("name", str(t)))
+            else:
+                tools.append(str(t))
+
+        raw_hooks = cfg.get("hooks", [])
+        hooks: list[str] = []
+        for h in raw_hooks if isinstance(raw_hooks, list) else []:
+            if isinstance(h, str):
+                hooks.append(h)
+            elif isinstance(h, dict):
+                hooks.append(h.get("name", str(h)))
+            else:
+                hooks.append(str(h))
+
+        raw_agents = cfg.get("agents", {})
+        agents: list[str] = []
+        if isinstance(raw_agents, dict):
+            agents = list(raw_agents.keys())
+        elif isinstance(raw_agents, list):
+            for a in raw_agents:
+                if isinstance(a, str):
+                    agents.append(a)
+                elif isinstance(a, dict):
+                    agents.append(a.get("name", str(a)))
+                else:
+                    agents.append(str(a))
+
+        return {
+            "type": "config",
+            "session": session_info,
+            "providers": providers,
+            "tools": tools,
+            "hooks": hooks,
+            "agents": agents,
+        }
 
     def _cmd_modes(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
@@ -141,19 +222,18 @@ class CommandProcessor:
             state = handle.session.coordinator.session_state
             discovery = state.get("mode_discovery")
             if not discovery:
-                return {"type": "modes", "data": {"modes": [], "active_mode": None}}
+                return {"type": "modes", "modes": [], "active_mode": None}
             modes = discovery.list_modes()
+            # B1: Flatten — frontend reads result.modes and result.active_mode directly
             return {
                 "type": "modes",
-                "data": {
-                    "active_mode": state.get("active_mode"),
-                    "modes": [
-                        {"name": n, "description": d, "source": s} for n, d, s in modes
-                    ],
-                },
+                "active_mode": state.get("active_mode"),
+                "modes": [
+                    {"name": n, "description": d, "source": s} for n, d, s in modes
+                ],
             }
         except Exception:
-            return {"type": "modes", "data": {"modes": [], "active_mode": None}}
+            return {"type": "modes", "modes": [], "active_mode": None}
 
     def _cmd_mode(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
@@ -165,10 +245,8 @@ class CommandProcessor:
 
             if not args or args[0] == "off":
                 state["active_mode"] = None
-                return {
-                    "type": "mode_changed",
-                    "data": {"active_mode": None, "previous_mode": current},
-                }
+                # B1: Flatten + type "mode" (frontend checks result.type === 'mode')
+                return {"type": "mode", "active_mode": None, "previous_mode": current}
 
             mode_name = args[0]
             trailing_args = args[1:]
@@ -176,10 +254,7 @@ class CommandProcessor:
 
             if trailing_args and trailing_args[-1] == "off":
                 state["active_mode"] = None
-                return {
-                    "type": "mode_changed",
-                    "data": {"active_mode": None, "previous_mode": current},
-                }
+                return {"type": "mode", "active_mode": None, "previous_mode": current}
             elif trailing_args and trailing_args[-1] != "on":
                 trailing = " ".join(trailing_args)
             # if trailing_args == ["on"], trailing stays None
@@ -187,10 +262,7 @@ class CommandProcessor:
             # Toggle: if already active, deactivate
             if mode_name == current and trailing is None:
                 state["active_mode"] = None
-                return {
-                    "type": "mode_changed",
-                    "data": {"active_mode": None, "previous_mode": current},
-                }
+                return {"type": "mode", "active_mode": None, "previous_mode": current}
 
             # Validate mode exists
             discovery = state.get("mode_discovery")
@@ -198,19 +270,18 @@ class CommandProcessor:
                 avail = [n for n, _, _ in discovery.list_modes()]
                 return {
                     "type": "error",
-                    "data": {
-                        "message": f"Unknown mode: {mode_name}",
-                        "available_modes": avail,
-                    },
+                    "error": f"Unknown mode: {mode_name}",
+                    "available_modes": avail,
                 }
 
             state["active_mode"] = mode_name
             result: dict = {
-                "type": "mode_changed",
-                "data": {"active_mode": mode_name, "previous_mode": current},
+                "type": "mode",
+                "active_mode": mode_name,
+                "previous_mode": current,
             }
             if trailing:
-                result["data"]["trailing_prompt"] = trailing
+                result["trailing_prompt"] = trailing
             return result
         except Exception as e:
             return self._error(f"Mode command failed: {e}")
@@ -220,34 +291,47 @@ class CommandProcessor:
         if not handle:
             return self._error("No active session")
         name = " ".join(args) if args else "Untitled"
-        return {"type": "renamed", "data": {"session_id": session_id, "name": name}}
+        # B1: Flatten
+        return {"type": "renamed", "session_id": session_id, "name": name}
 
     def _cmd_fork(self, args: list[str], *, session_id: str | None = None) -> dict:
         handle = self._require_session(session_id)
         if not handle:
             return self._error("No active session")
         if not args:
+            # B1: Flatten
             return {
                 "type": "fork_info",
-                "data": {"turn_count": handle.turn_count, "session_id": session_id},
+                "turn_count": handle.turn_count,
+                "session_id": session_id,
             }
         try:
             turn = int(args[0])
-            return {"type": "forked", "data": {"parent_id": session_id, "turn": turn}}
+            # B1: Flatten
+            return {"type": "forked", "parent_id": session_id, "turn": turn}
         except ValueError:
             return self._error(f"Invalid turn number: {args[0]}")
 
     def _cmd_help(self, args: list[str], **_: Any) -> dict:
+        # B1: Flatten
         return {
             "type": "help",
-            "data": {
-                "commands": [
-                    {
-                        "name": f"/{c.name}",
-                        "description": c.description,
-                        "usage": c.usage,
-                    }
-                    for c in COMMANDS
-                ],
-            },
+            "commands": [
+                {
+                    "name": f"/{c.name}",
+                    "description": c.description,
+                    "usage": c.usage,
+                }
+                for c in COMMANDS
+            ],
+        }
+
+    def _cmd_bundle(self, args: list[str], *, session_id: str | None = None) -> dict:
+        # B4: Coming soon stub — bundle switching not yet implemented
+        return {
+            "type": "info",
+            "message": (
+                "Bundle switching is coming soon. "
+                "Create a new session with the desired bundle instead."
+            ),
         }
