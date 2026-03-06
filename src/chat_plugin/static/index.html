@@ -2744,6 +2744,9 @@
     const pendingEventsRef = useRef(new Map());
     const historyResumeTokenRef = useRef(0);
     const dragStateRef = useRef(null);
+    // E2: Synthetic streaming — track which blocks received real deltas
+    const seenDeltasRef = useRef(new Set());
+    const syntheticAnimRef = useRef(new Map());
     // Accumulates token usage across LLM calls within a single turn
     const turnTokensRef = useRef(null);
     const placeholderIdRef = useRef(null);
