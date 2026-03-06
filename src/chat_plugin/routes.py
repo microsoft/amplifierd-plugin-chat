@@ -83,8 +83,16 @@ def create_history_routes(
         limit: int = Query(default=200, ge=1, le=1000),
         offset: int = Query(default=0, ge=0),
     ) -> dict:
-        """Return lightweight metadata for all sessions discovered on disk."""
-        sessions = await asyncio.to_thread(scan_sessions, sessions_dir)
+        """Return lightweight metadata for all sessions discovered on disk.
+
+        scan_sessions() does a cheap mtime stat-sort first, then parallel
+        full-reads of only the requested offset:offset+limit window.
+        total_count reflects all discovered session directories before any
+        caller-side content filtering.
+        """
+        sessions, total_count = await asyncio.to_thread(
+            scan_sessions, sessions_dir, limit, offset
+        )
         pinned_ids = pin_storage.list_pins()
 
         # Filter: only include sessions with actual content
@@ -97,10 +105,10 @@ def create_history_routes(
         for row in sessions:
             row["pinned"] = row["session_id"] in pinned_ids
 
-        page = sessions[offset : offset + limit]
         return {
-            "sessions": page,
-            "has_more": offset + limit < len(sessions),
+            "sessions": sessions,
+            "total_count": total_count,
+            "has_more": offset + limit < total_count,
         }
 
     @router.get("/api/sessions/revisions")

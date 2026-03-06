@@ -37,6 +37,11 @@ def test_history_endpoint(client):
     data = resp.json()
     assert "sessions" in data
     assert isinstance(data["sessions"], list)
+    # Pagination metadata
+    assert "total_count" in data
+    assert "has_more" in data
+    assert isinstance(data["total_count"], int)
+    assert isinstance(data["has_more"], bool)
 
 
 def test_revisions_get(client):
@@ -101,5 +106,7 @@ def test_history_with_sessions_on_disk(client, tmp_path, state):
 
     resp = c.get("/chat/api/sessions/history")
     assert resp.status_code == 200
-    ids = [s["session_id"] for s in resp.json()["sessions"]]
+    data = resp.json()
+    ids = [s["session_id"] for s in data["sessions"]]
     assert "my-session" in ids
+    assert "total_count" in data

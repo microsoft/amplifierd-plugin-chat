@@ -1435,9 +1435,6 @@
         if (p.arguments == null && p.tool_input != null) {
           p.arguments = p.tool_input;
         }
-        // E4: Explicitly surface lineage fields so tool_call handler can use them
-        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
-        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       case 'tool:post': {
         const result = p.result;
@@ -1446,17 +1443,11 @@
           p.error = result.error || null;
           p.success = !result.error;
         }
-        // E4: Explicitly surface lineage fields
-        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
-        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       }
       case 'tool:error':
         if (p.success == null) p.success = false;
         if (p.error == null) p.error = p.message || 'Unknown error';
-        // E4: Explicitly surface lineage fields
-        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
-        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       case 'llm:response': {
         const usage = p.usage || {};
@@ -2741,7 +2732,6 @@
     const localIndexRef = useRef(0);
     const toolMapRef = useRef({});
     const childToToolRef = useRef({});
-    const pendingDelegatesRef = useRef([]); // E3: tracks in-flight delegate/task tool_call_ids
     const childAgentRef = useRef({});
     const sessionParentByIdRef = useRef({});
     const activeKeyRef = useRef(null);
@@ -3153,6 +3143,8 @@
           const delta = typeof msg.delta === 'string' ? msg.delta : '';
           if (!delta) break;
           const localIdx = getLocalIndex(msg.index);
+          // E2: mark this block as having received real streaming deltas
+          seenDeltasRef.current.add(localIdx);
           const textItemId = blockMapRef.current['id-' + localIdx];
           const thinkingItemId = blockMapRef.current['thinking-id-' + localIdx];
 
@@ -3184,8 +3176,47 @@
           const payloadText = typeof msg.text === 'string' ? msg.text : '';
           const textItemId = blockMapRef.current['id-' + localIdx];
           const thinkingItemId = blockMapRef.current['thinking-id-' + localIdx];
-          const el = textItemId ? document.getElementById(textItemId) : null;
-          const domText = el?.textContent || '';
+          const domEl = textItemId ? document.getElementById(textItemId) : null;
+          const domText = domEl?.textContent || '';
+
+          // E2: Synthetic streaming — if a text block received its full text
+          // via content_end but had zero prior content_delta events, the
+          // provider doesn't stream.  Animate the text with rAF so the
+          // response appears progressively instead of flashing in all at once.
+          if (payloadText && textItemId && !seenDeltasRef.current.has(localIdx)) {
+            // Cancel any stale animation for this block
+            const staleRaf = syntheticAnimRef.current.get(localIdx);
+            if (staleRaf) cancelAnimationFrame(staleRaf);
+
+            const fullText = payloadText;
+            // Adaptive chunk size: target ~3 s total animation duration
+            const TARGET_MS = 3000;
+            const chunkSize = Math.max(8, Math.min(200, Math.ceil(fullText.length / (TARGET_MS / 16))));
+            let pos = 0;
+
+            const tick = () => {
+              const tickEl = document.getElementById(textItemId);
+              if (!tickEl || pos >= fullText.length) {
+                // Animation complete: finalize with parsed markdown
+                syntheticAnimRef.current.delete(localIdx);
+                const parsedHtml = sanitizeHtml(marked.parse(fullText));
+                setChronoItems(prev => prev.map(item =>
+                  item.id === textItemId
+                    ? { ...item, streaming: false, content: fullText, htmlContent: parsedHtml }
+                    : item
+                ));
+                return;
+              }
+              // Direct DOM write (same approach as real content_delta)
+              tickEl.textContent += fullText.slice(pos, pos + chunkSize);
+              pos += chunkSize;
+              syntheticAnimRef.current.set(localIdx, requestAnimationFrame(tick));
+            };
+
+            syntheticAnimRef.current.set(localIdx, requestAnimationFrame(tick));
+            seenDeltasRef.current.delete(localIdx);
+            break; // skip normal finalization path
+          }
 
           setChronoItems(prev => prev.map(item => {
             if (item.id === textItemId) {
@@ -3259,11 +3290,6 @@
           const subAgentName = originSessionId ? childAgentRef.current[originSessionId] : null;
           const isSubAgentTool = !!originParentId || !!(originSessionId && childToToolRef.current[originSessionId]);
           toolMapRef.current[msg.tool_call_id] = itemId;
-          // E3: Record delegate/task tool calls so session_fork can correlate them
-          // even when parent_tool_call_id is absent from the kernel event.
-          if (msg.tool_name === 'delegate' || msg.tool_name === 'task') {
-            pendingDelegatesRef.current.push(msg.tool_call_id);
-          }
           setChronoItems(prev => [...prev, {
             id: itemId, type: 'tool_call',
             toolName: msg.tool_name, toolCallId: msg.tool_call_id,
@@ -3291,12 +3317,7 @@
         }
 
         case 'session_fork': {
-          // E3: Use parent_tool_call_id from the event if present; otherwise fall back
-          // to the oldest pending delegate/task tool call (FIFO correlation).
-          const forkParentCallId = msg.parent_tool_call_id
-            || pendingDelegatesRef.current.shift()
-            || null;
-          const parentToolId = forkParentCallId ? toolMapRef.current[forkParentCallId] : null;
+          const parentToolId = toolMapRef.current[msg.parent_tool_call_id];
           const childId = typeof msg.child_id === 'string' ? msg.child_id : null;
           applySessionForkLineage(msg);
           if (parentToolId) {
@@ -3363,7 +3384,10 @@
           blockMapRef.current = {};
           cycleRef.current = 0;
           localIndexRef.current = 0;
-          pendingDelegatesRef.current = []; // E3: clear on turn completion
+          // E2: cancel any in-flight synthetic animations
+          for (const rafId of syntheticAnimRef.current.values()) cancelAnimationFrame(rafId);
+          syntheticAnimRef.current.clear();
+          seenDeltasRef.current.clear();
           break;
 
         case 'execution_cancelled':
@@ -3402,46 +3426,11 @@
           break;
         }
 
-        case 'command_result': {
-          // When the /cwd command succeeds, update session state with the
-          // new session_id and cwd so subsequent prompts go to the correct
-          // backend session.
-          if (msg.command === 'cwd' && msg.result && !msg.result.error) {
-            const newCwd = msg.result.cwd;
-            const newSid = msg.result.session_id;
-            if (isActiveStream) {
-              if (newSid) setSessionId(newSid);
-              if (newCwd) setCwd(newCwd);
-            }
-            if (ownerKey) {
-              setSessions(prev => {
-                const next = new Map(prev);
-                const s = next.get(ownerKey);
-                if (s) {
-                  const patch = {};
-                  if (newSid) patch.sessionId = newSid;
-                  if (newCwd) { patch.cwd = newCwd; patch.serverCwd = newCwd; }
-                  next.set(ownerKey, { ...s, ...patch });
-                }
-                return next;
-              });
-            }
-            break;  // Skip the system message for silent CWD updates
-          }
-          const fmt = formatCommandResult(msg.command, msg.result);
-          const item = {
-            id: makeId(), type: 'text', role: 'system',
-            streaming: false, order: orderCounterRef.current++,
-          };
-          if (fmt.html) {
-            item.htmlContent = fmt.html;
-            item.cssClass = fmt.cssClass || '';
-          } else {
-            item.content = fmt.text;
-          }
-          setChronoItems(prev => [...prev, item]);
-          break;
-        }
+        // NOTE: 'command_result' handler removed — commands now use
+        // REST (POST /chat/command) and are not pushed over SSE.
+        // 'command_result' is not in SSE_EVENT_TYPE_MAP so this branch
+        // was unreachable. Results are handled by the REST response path.
+
 
         case 'cancel_acknowledged':
           // Server received the cancel request; awaiting full stop
@@ -4136,8 +4125,10 @@
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
-      pendingDelegatesRef.current = []; // E3: clear on session switch
-      pendingDelegatesRef.current = []; // E3: clear on session switch
+      // E2: cancel any in-flight synthetic animations
+      for (const rafId of syntheticAnimRef.current.values()) cancelAnimationFrame(rafId);
+      syntheticAnimRef.current.clear();
+      seenDeltasRef.current.clear();
 
       // Close previous SSE if any
       if (sseRef.current) {
@@ -4199,6 +4190,10 @@
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
+      // E2: cancel any in-flight synthetic animations
+      for (const rafId of syntheticAnimRef.current.values()) cancelAnimationFrame(rafId);
+      syntheticAnimRef.current.clear();
+      seenDeltasRef.current.clear();
 
       // Close any old SSE on the target session
       if (target.sse) {
@@ -4440,7 +4435,10 @@
       blockMapRef.current = {};
       cycleRef.current = 0;
       localIndexRef.current = 0;
-      pendingDelegatesRef.current = []; // E3: clear on session switch
+      // E2: cancel any in-flight synthetic animations
+      for (const rafId of syntheticAnimRef.current.values()) cancelAnimationFrame(rafId);
+      syntheticAnimRef.current.clear();
+      seenDeltasRef.current.clear();
       const queued = pendingEventsRef.current.get(key);
       if (queued && queued.length > 0) {
         pendingEventsRef.current.delete(key);
