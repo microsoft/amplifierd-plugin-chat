@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "amplifierd"
 version = "0.1.0"
-source = { git = "https://github.com/payneio/amplifierd#e742abcb054f3f6569955891bf97ac585bd6d36c" }
+source = { git = "https://github.com/microsoft/amplifierd#4ba56b43747d2eea216a5d31367f3136fff3cfdd" }
 dependencies = [
     { name = "amplifier-core" },
     { name = "amplifier-foundation" },
@@ -70,7 +70,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "amplifierd", marker = "extra == 'dev'", git = "https://github.com/payneio/amplifierd" },
+    { name = "amplifierd", marker = "extra == 'dev'", git = "https://github.com/microsoft/amplifierd" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'test'" },
     { name = "pydantic", specifier = ">=2.0" },
