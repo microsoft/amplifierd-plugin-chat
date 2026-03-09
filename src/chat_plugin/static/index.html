@@ -3402,12 +3402,39 @@
         }
 
         case 'session_fork': {
-          const parentToolId = toolMapRef.current[msg.parent_tool_call_id];
           const childId = typeof msg.child_id === 'string' ? msg.child_id : null;
           applySessionForkLineage(msg);
-          if (parentToolId) {
-            if (childId) childToToolRef.current[childId] = parentToolId;
+
+          let parentToolCallId = msg.parent_tool_call_id || null;
+          let parentItemId = parentToolCallId ? toolMapRef.current[parentToolCallId] : null;
+
+          if (!parentItemId) {
+            // FIFO fallback: oldest pending delegate/task without a sub-session
+            const currentItems = chronoItemsRef.current;
+            for (let i = 0; i < currentItems.length; i++) {
+              const ci = currentItems[i];
+              if (ci.type === 'tool_call'
+                  && (ci.toolName === 'delegate' || ci.toolName === 'task')
+                  && (ci.toolStatus === 'pending' || ci.toolStatus === 'running')
+                  && !ci.subSessionId) {
+                parentToolCallId = ci.toolCallId;
+                parentItemId = ci.id;
+                break;
+              }
+            }
           }
+
+          if (!parentToolCallId || !parentItemId) break;
+
+          if (childId) childToToolRef.current[childId] = parentToolCallId;
+
+          createSubSession(parentToolCallId, childId, msg.agent);
+
+          setChronoItems(prev => prev.map(item =>
+            item.id === parentItemId
+              ? { ...item, subSessionId: childId }
+              : item
+          ));
           break;
         }
 
