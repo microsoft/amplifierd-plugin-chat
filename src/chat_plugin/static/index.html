@@ -3411,6 +3411,17 @@
         }
 
         case 'thinking_delta': {
+          // Sub-session routing
+          {
+            const subKey = resolveSubSessionKey(msg);
+            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+              updateSubSessionContent(subKey, sub => {
+                const item = sub.content.slice().reverse().find(c => c.type === 'thinking' && c.streaming);
+                if (item) item.content += msg.delta;
+              });
+              break;
+            }
+          }
           // Use state update so content accumulates even when collapsed
           setChronoItems(prev => prev.map(item =>
             item.type === 'thinking' && item.streaming
@@ -3421,6 +3432,20 @@
         }
 
         case 'thinking_final': {
+          // Sub-session routing
+          {
+            const subKey = resolveSubSessionKey(msg);
+            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+              updateSubSessionContent(subKey, sub => {
+                const item = sub.content.slice().reverse().find(c => c.type === 'thinking' && c.streaming);
+                if (item) {
+                  item.content = msg.content;
+                  item.streaming = false;
+                }
+              });
+              break;
+            }
+          }
           setChronoItems(prev => prev.map(item =>
             item.type === 'thinking' && item.streaming
               ? { ...item, content: msg.content, streaming: false }
