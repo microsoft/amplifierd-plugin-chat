@@ -1986,6 +1986,20 @@
       }
 
       if (role === 'tool') {
+        // Handle string content directly (e.g., delegate/task tool results
+        // where content is a JSON-encoded string like '{"response":"...","session_id":"..."}')
+        if (typeof content === 'string') {
+          const toolUseId = msg.tool_call_id || msg.tool_use_id;
+          const idx = toolCallIndexById[toolUseId];
+          if (idx !== undefined) {
+            items[idx] = {
+              ...items[idx],
+              result: content,
+              toolStatus: msg.is_error ? 'error' : 'complete',
+            };
+          }
+          continue;
+        }
         const blocks = Array.isArray(content) ? content : [content];
         for (const block of blocks) {
           if (!block || typeof block !== 'object') continue;
