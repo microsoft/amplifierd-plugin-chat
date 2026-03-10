@@ -898,18 +898,19 @@
 
     /* —— Sub-Session ————————————————————————————————————————————— */
     .sub-session {
-      background: rgba(255,255,255,0.02);
+      background: var(--bg-tertiary, rgba(255,255,255,0.02));
       border-left: 2px solid var(--border);
       margin-top: 6px;
       padding: 6px 0 6px 10px;
-      font-size: 0.9em;
+      font-size: 13px;
     }
     .sub-session .sub-session {
-      border-left-color: rgba(255,255,255,0.08);
-      font-size: 0.95em;
+      border-left-color: var(--border);
+      font-size: 12px;
     }
     .sub-session .sub-session .sub-session {
-      border-left-color: rgba(255,255,255,0.05);
+      border-left-color: var(--border);
+      font-size: 12px;
     }
     .sub-session-header {
       display: flex;
@@ -953,10 +954,10 @@
     }
     .sub-session-body .text-block {
       color: var(--text-secondary);
-      font-size: 0.95em;
+      font-size: 13px;
     }
     .sub-session-body .thinking-block {
-      font-size: 0.9em;
+      font-size: 12px;
       opacity: 0.85;
     }
     .nested-tool-call {
@@ -973,11 +974,11 @@
       border-radius: 3px;
     }
     .nested-tool-header:hover {
-      background: rgba(255,255,255,0.04);
+      background: var(--action-btn-bg, rgba(255,255,255,0.04));
     }
     .nested-tool-body {
       padding: 4px 8px;
-      font-size: 0.9em;
+      font-size: 12px;
     }
     .nested-tool-body .tool-args-json {
       max-height: 120px;
@@ -986,6 +987,11 @@
     .nested-tool-body .tool-result-text {
       max-height: 120px;
       overflow: auto;
+    }
+    .sub-session-waiting {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-style: italic;
     }
 
     /* —— Approval Modal ———————————————————————————————————————————— */
@@ -2053,7 +2059,7 @@
 
       const parentToolCallId = dt.toolCallId;
       subSessionsRef.current.set(parentToolCallId, {
-        sessionId: dt.subAgentName ? null : null, // not available from transcript
+        sessionId: null, // not available from transcript
         parentToolCallId,
         agent: dt.subAgentName || (dt.arguments && dt.arguments.agent) || null,
         status: dt.toolStatus === 'error' ? 'error' : 'complete',
@@ -2187,9 +2193,13 @@
       }
     }, [item.toolStatus]);
 
-    // Auto-expand when sub-session appears
+    // Auto-expand when sub-session appears — fires only once
+    const hasAutoExpanded = useRef(false);
     useEffect(() => {
-      if (hasSubSession && !expanded) setExpanded(true);
+      if (hasSubSession && !hasAutoExpanded.current) {
+        hasAutoExpanded.current = true;
+        setExpanded(true);
+      }
     }, [hasSubSession]);
 
     return html`
@@ -2224,17 +2234,29 @@
   }
 
   function SubSessionView({ parentToolCallId, subSessionsRef, revision, depth = 0, onNavigateSession }) {
+    const MAX_NESTING = 4;
+    const [collapsed, setCollapsed] = useState(false);
     const sub = subSessionsRef.current.get(parentToolCallId);
     if (!sub) return null;
 
-    const [collapsed, setCollapsed] = useState(false);
-    const statusIcon = sub.status === 'running' ? '\u27F3'
-                     : sub.status === 'error' ? '\u2717' : '\u2713';
+    if (depth >= MAX_NESTING) {
+      return html`<div class="sub-session-truncated">
+        <span class="sub-session-agent">${sub.agent || 'sub-agent'}</span>
+        <span style="color: var(--text-muted); font-size: 11px;"> (nested ${depth} levels deep)</span>
+        ${onNavigateSession && sub.sessionId && html`
+          <a class="sub-session-nav-link"
+             onClick=${(e) => { e.stopPropagation(); onNavigateSession(sub.sessionId); }}>Open session</a>
+        `}
+      </div>`;
+    }
+
+    const statusIcon = getToolStatusIcon(sub.status);
     const statusClass = sub.status === 'running' ? ' status-running' : '';
 
     // Merge content and toolCalls, sort by .order
     const allItems = [...sub.content, ...sub.toolCalls]
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const isEmpty = allItems.length === 0 && sub.status === 'running';
 
     return html`
       <div class="sub-session" style=${'--nesting-depth: ' + depth}>
@@ -2250,6 +2272,7 @@
         </div>
         ${!collapsed && html`
           <div class="sub-session-body">
+            ${isEmpty && html`<span class="sub-session-waiting">Waiting for response...</span>`}
             ${allItems.map(item => {
               if (item.type === 'tool_call') {
                 return html`<${NestedToolCallView}
@@ -3013,9 +3036,15 @@
     const subSessionsRef = useRef(new Map());
     const subBlockMapRef = useRef(new Map());
     const subNextIndexRef = useRef(new Map());
-    const collapsedSubSessionsRef = useRef(new Set());
     const [subSessionRevision, setSubSessionRevision] = useState(0);
     const subSessionRafRef = useRef(null);
+
+    function resetSubSessionState() {
+      subSessionsRef.current = new Map();
+      subBlockMapRef.current = new Map();
+      subNextIndexRef.current = new Map();
+      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
+    }
 
     useEffect(() => {
       activeKeyRef.current = activeKey;
@@ -3901,11 +3930,6 @@
             turnTokensRef.current = null;
           }
           blockMapRef.current = {};
-      subSessionsRef.current = new Map();
-      subBlockMapRef.current = new Map();
-      subNextIndexRef.current = new Map();
-      collapsedSubSessionsRef.current = new Set();
-      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
           cycleRef.current = 0;
           localIndexRef.current = 0;
           // E2: cancel any in-flight synthetic animations
@@ -4657,11 +4681,7 @@
         return next;
       });
       blockMapRef.current = {};
-      subSessionsRef.current = new Map();
-      subBlockMapRef.current = new Map();
-      subNextIndexRef.current = new Map();
-      collapsedSubSessionsRef.current = new Set();
-      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
+      resetSubSessionState();
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
@@ -4727,11 +4747,7 @@
         return next;
       });
       blockMapRef.current = {};
-      subSessionsRef.current = new Map();
-      subBlockMapRef.current = new Map();
-      subNextIndexRef.current = new Map();
-      collapsedSubSessionsRef.current = new Set();
-      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
+      resetSubSessionState();
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
@@ -4980,11 +4996,7 @@
       setActiveKey(key);
       setMobileSidebarOpen(false);
       blockMapRef.current = {};
-      subSessionsRef.current = new Map();
-      subBlockMapRef.current = new Map();
-      subNextIndexRef.current = new Map();
-      collapsedSubSessionsRef.current = new Set();
-      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
+      resetSubSessionState();
       cycleRef.current = 0;
       localIndexRef.current = 0;
       // E2: cancel any in-flight synthetic animations
