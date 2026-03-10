@@ -29,6 +29,15 @@
       --action-btn-bg-active: rgba(255, 255, 255, 0.15);
       --action-btn-color: #b0b0b0;
       --action-btn-color-hover: #e8e8e8;
+    
+      /* Sub-session tokens */
+      --sub-bg: rgba(255, 255, 255, 0.025);
+      --sub-bg-elevated: rgba(255, 255, 255, 0.04);
+      --sub-bg-hover: rgba(255, 255, 255, 0.06);
+      --sub-border: rgba(255, 255, 255, 0.06);
+      --sub-border-left: rgba(99, 102, 241, 0.4);
+      --sub-text: #aaa;
+      --sub-text-muted: #666;
     }
 
     body[data-theme="light"] {
@@ -49,6 +58,14 @@
       --action-btn-bg-active: rgba(0, 0, 0, 0.12);
       --action-btn-color: #64748b;
       --action-btn-color-hover: #0f172a;
+    
+      --sub-bg: rgba(0, 0, 0, 0.025);
+      --sub-bg-elevated: rgba(0, 0, 0, 0.035);
+      --sub-bg-hover: rgba(0, 0, 0, 0.05);
+      --sub-border: rgba(0, 0, 0, 0.08);
+      --sub-border-left: rgba(99, 102, 241, 0.35);
+      --sub-text: #4a5568;
+      --sub-text-muted: #718096;
     }
 
     body {
@@ -898,21 +915,20 @@
 
     /* —— Sub-Session ————————————————————————————————————————————— */
     .sub-session {
-      background: var(--bg-tertiary, rgba(255,255,255,0.02));
-      border-left: 2px solid var(--border);
+      background: var(--sub-bg);
+      border-left: 2px solid var(--sub-border-left);
       margin-top: 8px;
-      padding: 8px 8px 8px 12px;
+      padding: 10px 12px 10px 14px;
       font-size: 13px;
-      border-radius: 0 4px 4px 0;
+      border-radius: 0 6px 6px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
     .sub-session .sub-session {
-      border-left-color: var(--border);
       font-size: 12px;
     }
-    .sub-session .sub-session .sub-session {
-      border-left-color: var(--border);
-      font-size: 12px;
-    }
+
     .sub-session-header {
       display: flex;
       align-items: center;
@@ -920,11 +936,11 @@
       cursor: pointer;
       padding: 2px 0;
       font-size: 12px;
-      color: var(--text-muted);
+      color: var(--sub-text-muted);
       user-select: none;
     }
     .sub-session-header:hover {
-      color: var(--text-secondary);
+      color: var(--sub-text);
     }
     .sub-session-status {
       font-size: 12px;
@@ -938,34 +954,118 @@
       font-size: 11px;
       color: var(--accent, #7c8aff);
       cursor: pointer;
-      opacity: 0.7;
+      opacity: 0.85;
       margin-left: auto;
+      padding: 2px 6px;
+      border-radius: 3px;
     }
     .sub-session-nav-link:hover {
       opacity: 1;
       text-decoration: underline;
+      background: var(--sub-bg-hover);
     }
     .sub-session-chevron {
       font-size: 10px;
       margin-left: 4px;
-      color: var(--text-muted);
+      color: var(--sub-text-muted);
     }
     .sub-session-body {
-      padding: 6px 0 4px 0;
       display: flex;
       flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Delegated prompt (user-message inside sub-session) */
+    .sub-session .user-message {
+      align-self: flex-start;
+      max-width: 100%;
+      background: var(--sub-bg-elevated);
+      color: var(--sub-text);
+      border: 1px solid var(--sub-border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-style: italic;
+      font-size: 0.92em;
+      line-height: 1.5;
+    }
+    .sub-session .user-message::before {
+      content: "Prompt";
+      display: block;
+      font-size: 10px;
+      font-style: normal;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--sub-text-muted);
+      margin-bottom: 4px;
+    }
+
+    /* Sub-session text blocks */
+    .sub-session .text-block {
+      background: var(--sub-bg-elevated);
+      border: 1px solid var(--sub-border);
+      color: var(--sub-text);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .sub-session .text-block h1,
+    .sub-session .text-block h2,
+    .sub-session .text-block h3 {
+      color: var(--text-primary);
+    }
+    .sub-session .text-block code {
+      background: var(--sub-bg-hover);
+    }
+    .sub-session .text-block pre {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* Sub-session tool cards */
+    .sub-session .tool-card {
+      background: var(--sub-bg);
+      border-color: var(--sub-border);
+    }
+    .sub-session .tool-header {
+      padding: 5px 8px;
+      background: var(--sub-bg-elevated);
       gap: 6px;
     }
-    .sub-session-body .text-block {
-      color: var(--text-secondary);
-      font-size: 13px;
-      padding: 2px 0;
+    .sub-session .tool-header:hover {
+      background: var(--sub-bg-hover);
     }
-    .sub-session-body .thinking-block {
-      font-size: 12px;
-      opacity: 0.85;
-      margin: 2px 0;
+    .sub-session .tool-name {
+      color: var(--sub-text);
+      font-weight: 400;
     }
+    .sub-session .tool-body {
+      padding: 6px 8px;
+      border-top-color: var(--sub-border);
+    }
+    .sub-session .tool-args-json {
+      font-size: 10px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .sub-session .tool-result-text {
+      font-size: 11px;
+      color: var(--sub-text-muted);
+    }
+
+    /* Sub-session thinking blocks */
+    .sub-session .thinking-block {
+      border-color: rgba(139, 92, 246, 0.2);
+      background: rgba(139, 92, 246, 0.03);
+    }
+    .sub-session .thinking-header {
+      font-size: 11px;
+      padding: 5px 10px;
+    }
+    .sub-session .thinking-content {
+      font-size: 11px;
+      padding: 6px 10px;
+    }
+
+    /* Nested tool calls (inside sub-sessions) */
     .nested-tool-call {
       margin: 4px 0;
     }
@@ -974,13 +1074,13 @@
       align-items: center;
       gap: 4px;
       font-size: 12px;
-      color: var(--text-muted);
+      color: var(--sub-text-muted);
       cursor: pointer;
       padding: 2px 4px;
       border-radius: 3px;
     }
     .nested-tool-header:hover {
-      background: var(--action-btn-bg, rgba(255,255,255,0.04));
+      background: var(--sub-bg-hover);
     }
     .nested-tool-body {
       padding: 4px 8px;
@@ -994,10 +1094,18 @@
       max-height: 120px;
       overflow: auto;
     }
+
     .sub-session-waiting {
       font-size: 12px;
-      color: var(--text-muted);
+      color: var(--sub-text-muted);
       font-style: italic;
+    }
+    .sub-session-truncated {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0;
+      font-size: 12px;
     }
 
     /* —— Approval Modal ———————————————————————————————————————————— */
