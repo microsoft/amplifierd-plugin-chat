@@ -901,8 +901,91 @@
       background: rgba(255,255,255,0.02);
       border-left: 2px solid var(--border);
       margin-top: 6px;
-      padding: 6px 8px;
+      padding: 6px 0 6px 10px;
       font-size: 0.9em;
+    }
+    .sub-session .sub-session {
+      border-left-color: rgba(255,255,255,0.08);
+      font-size: 0.95em;
+    }
+    .sub-session .sub-session .sub-session {
+      border-left-color: rgba(255,255,255,0.05);
+    }
+    .sub-session-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      padding: 2px 0;
+      font-size: 12px;
+      color: var(--text-muted);
+      user-select: none;
+    }
+    .sub-session-header:hover {
+      color: var(--text-secondary);
+    }
+    .sub-session-status {
+      font-size: 12px;
+      display: inline-block;
+    }
+    .sub-session-agent {
+      font-weight: 500;
+      color: var(--accent, #7c8aff);
+    }
+    .sub-session-nav-link {
+      font-size: 11px;
+      color: var(--accent, #7c8aff);
+      cursor: pointer;
+      opacity: 0.7;
+      margin-left: auto;
+    }
+    .sub-session-nav-link:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .sub-session-chevron {
+      font-size: 10px;
+      margin-left: 4px;
+      color: var(--text-muted);
+    }
+    .sub-session-body {
+      padding-top: 4px;
+    }
+    .sub-session-body .text-block {
+      color: var(--text-secondary);
+      font-size: 0.95em;
+    }
+    .sub-session-body .thinking-block {
+      font-size: 0.9em;
+      opacity: 0.85;
+    }
+    .nested-tool-call {
+      margin: 4px 0;
+    }
+    .nested-tool-header {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    .nested-tool-header:hover {
+      background: rgba(255,255,255,0.04);
+    }
+    .nested-tool-body {
+      padding: 4px 8px;
+      font-size: 0.9em;
+    }
+    .nested-tool-body .tool-args-json {
+      max-height: 120px;
+      overflow: auto;
+    }
+    .nested-tool-body .tool-result-text {
+      max-height: 120px;
+      overflow: auto;
     }
 
     /* —— Approval Modal ———————————————————————————————————————————— */
@@ -1917,6 +2000,78 @@
     return items;
   }
 
+  /**
+   * Post-process chrono items to reconstruct sub-sessions from saved transcripts.
+   * Delegation tool calls (delegate/task) with originSessionId are identified,
+   * and content items belonging to child sessions are moved into SubSession entries
+   * in the provided subSessionsRef map.
+   */
+  function reconstructSubSessionsFromTranscript(items, subSessionsRef) {
+    // Identify delegation tool calls that spawned child sessions
+    const delegateTools = [];
+    const childSessionIds = new Set();
+    for (const item of items) {
+      if (item.type === 'tool_call'
+          && (item.toolName === 'delegate' || item.toolName === 'task')
+          && item.originSessionId) {
+        // This is a tool call that was executed IN a child session — it's a sub-agent's tool.
+        // We want the PARENT delegate/task tool call, which has origin === 'main'.
+        continue;
+      }
+      if (item.type === 'tool_call'
+          && (item.toolName === 'delegate' || item.toolName === 'task')
+          && item.origin === 'main') {
+        delegateTools.push(item);
+      }
+    }
+
+    if (delegateTools.length === 0) return items;
+
+    // For each delegate tool, find child items that belong to its spawned session.
+    // Child items have originSessionId or originParentId set.
+    // The matching heuristic: items with origin === 'sub-agent' that appear
+    // between this delegate tool_call and the next main-session item.
+    const childItemIds = new Set();
+    for (const dt of delegateTools) {
+      const dtOrder = dt.order;
+      const childItems = [];
+      let childOrder = 0;
+
+      for (const item of items) {
+        if (item === dt) continue;
+        if (item.origin === 'sub-agent' && item.order > dtOrder) {
+          // Check if this belongs to a LATER delegate (stop if we hit one)
+          const laterDelegate = delegateTools.find(d => d !== dt && d.order > dtOrder && d.order < item.order);
+          if (laterDelegate) continue;
+
+          childItems.push({ ...item, order: childOrder++ });
+          childItemIds.add(item.id);
+        }
+      }
+
+      if (childItems.length === 0) continue;
+
+      const parentToolCallId = dt.toolCallId;
+      subSessionsRef.current.set(parentToolCallId, {
+        sessionId: dt.subAgentName ? null : null, // not available from transcript
+        parentToolCallId,
+        agent: dt.subAgentName || (dt.arguments && dt.arguments.agent) || null,
+        status: dt.toolStatus === 'error' ? 'error' : 'complete',
+        content: childItems.filter(i => i.type !== 'tool_call'),
+        toolCalls: childItems.filter(i => i.type === 'tool_call'),
+        orderCounter: childItems.length,
+      });
+
+      dt.subSessionId = parentToolCallId; // flag for rendering
+    }
+
+    // Remove child items from main timeline
+    if (childItemIds.size > 0) {
+      return items.filter(item => !childItemIds.has(item.id));
+    }
+    return items;
+  }
+
   function countTranscriptMessages(transcript) {
     let count = 0;
     for (const msg of (Array.isArray(transcript) ? transcript : [])) {
@@ -2010,7 +2165,7 @@
     `;
   }
 
-  function ToolCallCard({ item, isActivity }) {
+  function ToolCallCard({ item, isActivity, subSessionsRef, subSessionRevision, onNavigateSession }) {
     const [expanded, setExpanded] = useState(false);
     const statusIcon = getToolStatusIcon(item.toolStatus);
     const isRunning = item.toolStatus === 'running';
@@ -2023,6 +2178,7 @@
     const originTitle = item.originSessionId
       ? ('Executed in delegated session ' + item.originSessionId)
       : 'Executed in a delegated sub-agent session';
+    const hasSubSession = item.subSessionId && subSessionsRef && subSessionsRef.current.has(item.toolCallId);
 
     // Keep card sizing/layout unchanged; only auto-open once result is available.
     useEffect(() => {
@@ -2030,6 +2186,11 @@
         setExpanded(true);
       }
     }, [item.toolStatus]);
+
+    // Auto-expand when sub-session appears
+    useEffect(() => {
+      if (hasSubSession && !expanded) setExpanded(true);
+    }, [hasSubSession]);
 
     return html`
       <div class="tool-card">
@@ -2041,23 +2202,105 @@
         </div>
         ${expanded && html`
           <div class="tool-body">
-            <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
-            ${item.result && html`
-              <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
-                ${item.resultError || item.result || ''}
-              </div>
+            ${!hasSubSession && html`
+              <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
+              ${item.result && html`
+                <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
+                  ${item.resultError || item.result || ''}
+                </div>
+              `}
             `}
-            ${item.subSessionId && html`<${SubSessionView} sessionId=${item.subSessionId} items=${item.subItems || []} />`}
+            ${hasSubSession && html`<${SubSessionView}
+              parentToolCallId=${item.toolCallId}
+              subSessionsRef=${subSessionsRef}
+              revision=${subSessionRevision}
+              depth=${0}
+              onNavigateSession=${onNavigateSession}
+            />`}
           </div>
         `}
       </div>
     `;
   }
 
-  function SubSessionView({ sessionId, items }) {
+  function SubSessionView({ parentToolCallId, subSessionsRef, revision, depth = 0, onNavigateSession }) {
+    const sub = subSessionsRef.current.get(parentToolCallId);
+    if (!sub) return null;
+
+    const [collapsed, setCollapsed] = useState(false);
+    const statusIcon = sub.status === 'running' ? '\u27F3'
+                     : sub.status === 'error' ? '\u2717' : '\u2713';
+    const statusClass = sub.status === 'running' ? ' status-running' : '';
+
+    // Merge content and toolCalls, sort by .order
+    const allItems = [...sub.content, ...sub.toolCalls]
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
     return html`
-      <div class="sub-session">
-        ${items.map(item => html`<${ChronoItem} item=${item} isActivity=${true} />`)}
+      <div class="sub-session" style=${'--nesting-depth: ' + depth}>
+        <div class="sub-session-header" onClick=${() => setCollapsed(c => !c)}>
+          <span class=${'sub-session-status' + statusClass}>${statusIcon}</span>
+          <span class="sub-session-agent">${sub.agent || 'sub-agent'}</span>
+          ${onNavigateSession && sub.sessionId && html`
+            <a class="sub-session-nav-link"
+               onClick=${(e) => { e.stopPropagation(); onNavigateSession(sub.sessionId); }}
+               title="Open this agent session">Open session \u2192</a>
+          `}
+          <span class="sub-session-chevron">${collapsed ? '\u25B6' : '\u25BC'}</span>
+        </div>
+        ${!collapsed && html`
+          <div class="sub-session-body">
+            ${allItems.map(item => {
+              if (item.type === 'tool_call') {
+                return html`<${NestedToolCallView}
+                  item=${item}
+                  subSessionsRef=${subSessionsRef}
+                  revision=${revision}
+                  depth=${depth + 1}
+                  onNavigateSession=${onNavigateSession}
+                />`;
+              }
+              return html`<${ChronoItem} item=${item} isActivity=${true} />`;
+            })}
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function NestedToolCallView({ item, subSessionsRef, revision, depth, onNavigateSession }) {
+    const [expanded, setExpanded] = useState(false);
+    const statusIcon = getToolStatusIcon(item.toolStatus);
+    const isRunning = item.toolStatus === 'running';
+    const argPreview = getArgPreview(item.toolName, item.arguments || {});
+    const hasSubSession = subSessionsRef.current.has(item.toolCallId);
+
+    return html`
+      <div class="nested-tool-call">
+        <div class="nested-tool-header" onClick=${() => setExpanded(e => !e)}>
+          <span class=${'tool-status' + (isRunning ? ' status-running' : '')}>${statusIcon}</span>
+          <span class="tool-name">${item.toolName || 'tool'}</span>
+          <span class="tool-arg-preview">${argPreview}</span>
+        </div>
+        ${expanded && !hasSubSession && html`
+          <div class="nested-tool-body">
+            <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
+            ${item.result && html`
+              <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
+                ${item.resultError || item.result || ''}
+              </div>
+            `}
+          </div>
+        `}
+        ${hasSubSession && html`
+          <${SubSessionView}
+            parentToolCallId=${item.toolCallId}
+            subSessionsRef=${subSessionsRef}
+            revision=${revision}
+            depth=${depth}
+            onNavigateSession=${onNavigateSession}
+          />
+        `}
       </div>
     `;
   }
@@ -2082,7 +2325,7 @@
     `;
   }
 
-  function ChronoItem({ item, isActivity }) {
+  function ChronoItem({ item, isActivity, subSessionsRef, subSessionRevision, onNavigateSession }) {
     if (item.type === 'text') {
       const cls = 'text-block'
         + (item.role === 'user' ? ' user-message' : '')
@@ -2099,7 +2342,9 @@
       return html`<${ThinkingBlock} item=${item} />`;
     }
     if (item.type === 'tool_call') {
-      return html`<${ToolCallCard} item=${item} isActivity=${isActivity} />`;
+      return html`<${ToolCallCard} item=${item} isActivity=${isActivity}
+        subSessionsRef=${subSessionsRef} subSessionRevision=${subSessionRevision}
+        onNavigateSession=${onNavigateSession} />`;
     }
     if (item.type === 'token_usage') {
       return html`<${TokenUsagePill} tokens=${item.tokens} />`;
@@ -2114,6 +2359,9 @@
     showJumpControls = false,
     bottomNoticeSignal = 0,
     bottomNoticeLabel = 'New messages',
+    subSessionsRef,
+    subSessionRevision,
+    onNavigateSession,
   }) {
     const filtered = filterFn ? items.filter(filterFn) : items;
     const sorted = [...filtered].sort((a, b) => a.order - b.order);
@@ -2204,7 +2452,9 @@
     return html`
       <div class="message-list-wrap">
         <div id="message-list" ref=${listRef} onScroll=${updateScrollState}>
-          ${sorted.map(item => html`<${ChronoItem} key=${item.id} item=${item} />`)}
+          ${sorted.map(item => html`<${ChronoItem} key=${item.id} item=${item}
+            subSessionsRef=${subSessionsRef} subSessionRevision=${subSessionRevision}
+            onNavigateSession=${onNavigateSession} />`)}
           <div ref=${bottomRef}></div>
         </div>
         ${showJumpControls && scrollState.hasOverflow && html`
@@ -3651,6 +3901,11 @@
             turnTokensRef.current = null;
           }
           blockMapRef.current = {};
+      subSessionsRef.current = new Map();
+      subBlockMapRef.current = new Map();
+      subNextIndexRef.current = new Map();
+      collapsedSubSessionsRef.current = new Set();
+      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
           cycleRef.current = 0;
           localIndexRef.current = 0;
           // E2: cancel any in-flight synthetic animations
@@ -4195,6 +4450,17 @@
     }, []);
 
     // —— Send ————————————————————————————————————————————————————————
+    // — Sub-session navigation —
+    const navigateToSession = useCallback((sessionId) => {
+      if (!sessionId) return;
+      for (const [key, session] of sessionsRef.current.entries()) {
+        if (session && session.sessionId === sessionId) {
+          setActiveKey(key);
+          return;
+        }
+      }
+    }, []);
+
     const sendMessage = useCallback(async (content, images) => {
       const key = activeKeyRef.current;
       let activeSession = key ? sessionsRef.current.get(key) : null;
@@ -4391,6 +4657,11 @@
         return next;
       });
       blockMapRef.current = {};
+      subSessionsRef.current = new Map();
+      subBlockMapRef.current = new Map();
+      subNextIndexRef.current = new Map();
+      collapsedSubSessionsRef.current = new Set();
+      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
@@ -4456,6 +4727,11 @@
         return next;
       });
       blockMapRef.current = {};
+      subSessionsRef.current = new Map();
+      subBlockMapRef.current = new Map();
+      subNextIndexRef.current = new Map();
+      collapsedSubSessionsRef.current = new Set();
+      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
       cycleRef.current = 0;
       localIndexRef.current = 0;
       toolMapRef.current = {};
@@ -4474,7 +4750,8 @@
         .then(data => {
           if (transcriptAbort.signal.aborted) return;
           const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
-          const items = transcriptToChronoItems(transcript);
+          let items = transcriptToChronoItems(transcript);
+          items = reconstructSubSessionsFromTranscript(items, subSessionsRef);
           const messageCount = countTranscriptMessages(transcript);
           const restoredTurns = messageCount || target.savedTurnCount || target.turnCount || 0;
           const revision = typeof data?.revision === 'string'
@@ -4595,7 +4872,8 @@
       api.getTranscript(target.sessionId)
         .then(data => {
           const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
-          const items = transcriptToChronoItems(transcript);
+          let items = transcriptToChronoItems(transcript);
+          items = reconstructSubSessionsFromTranscript(items, subSessionsRef);
           const messageCount = countTranscriptMessages(transcript);
           const nextTurns = messageCount || target.savedTurnCount || target.turnCount || 0;
           const nextCount = Number(messageCount || nextTurns || 0);
@@ -4702,6 +4980,11 @@
       setActiveKey(key);
       setMobileSidebarOpen(false);
       blockMapRef.current = {};
+      subSessionsRef.current = new Map();
+      subBlockMapRef.current = new Map();
+      subNextIndexRef.current = new Map();
+      collapsedSubSessionsRef.current = new Set();
+      if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
       cycleRef.current = 0;
       localIndexRef.current = 0;
       // E2: cancel any in-flight synthetic animations
@@ -5188,6 +5471,9 @@
               showJumpControls=${true}
               bottomNoticeSignal=${diskUpdateNoticeSignal}
               bottomNoticeLabel="New messages"
+              subSessionsRef=${subSessionsRef}
+              subSessionRevision=${subSessionRevision}
+              onNavigateSession=${navigateToSession}
             />
             <${InputArea}
               onSend=${sendMessage}
@@ -5211,6 +5497,9 @@
                   filterFn=${activityFilter}
                   sessionKey=${(activeKey || 'none') + ':activity'}
                   showJumpControls=${false}
+                  subSessionsRef=${subSessionsRef}
+                  subSessionRevision=${subSessionRevision}
+                  onNavigateSession=${navigateToSession}
                 />
               </div>
             </div>
