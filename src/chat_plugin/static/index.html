@@ -4686,8 +4686,10 @@
             for (const [pKey, pSession] of sessionsRef.current.entries()) {
               if (pSession && pSession.sessionId === parentId) {
                 setCollapsedSpawnGroups(prev => {
-                  const next = new Set(prev);
-                  next.delete(pKey);
+                  // collapsedSpawnGroups is a plain object {key: bool}
+                  // A key with value !== false means collapsed; delete to expand
+                  const next = { ...prev };
+                  delete next[pKey];
                   return next;
                 });
                 break;
