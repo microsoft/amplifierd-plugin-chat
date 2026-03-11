@@ -1,11 +1,11 @@
 """CLI entry point for amplifier-chat.
 
-Boots a real amplifierd instance with the chat plugin. This is the
-standalone-app pattern: amplifierd is the platform, plugins provide the
-experience. When installed as a plugin into amplifierd (or amplifier-distro),
-the same ``create_router`` entry point is used -- nothing changes.
+Boots a real amplifier-distro instance with the chat plugin. This is the
+standalone-app pattern: amplifier-distro is the platform, plugins provide the
+experience. When installed as a plugin into amplifier-distro, the same
+``create_router`` entry point is used -- nothing changes.
 
-For plugin UI development without amplifierd, use the mock dev server::
+For plugin UI development without amplifier-distro, use the mock dev server::
 
     python -m chat_plugin
 

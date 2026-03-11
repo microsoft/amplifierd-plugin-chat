@@ -1,7 +1,7 @@
 """Standalone dev server for the chat plugin.
 
 Usage:
-    cd amplifierd-plugin-chat
+    cd amplifier-chat
     uv run --extra dev python -m chat_plugin
 
 The UI loads at http://127.0.0.1:8410/chat/
@@ -30,8 +30,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Chat plugin dev server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8410)
-    parser.add_argument("--sessions-dir", type=Path, default=None,
-                        help="Path to sessions directory for history scanning")
+    parser.add_argument(
+        "--sessions-dir",
+        type=Path,
+        default=None,
+        help="Path to sessions directory for history scanning",
+    )
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
 
@@ -44,7 +48,7 @@ def main() -> None:
     if args.sessions_dir:
         state.settings.sessions_dir = args.sessions_dir
 
-    app = FastAPI(title="amplifierd-plugin-chat (dev)")
+    app = FastAPI(title="amplifier-chat (dev)")
     app.include_router(create_router(state))
 
     print(f"Chat plugin dev server → http://{args.host}:{args.port}/chat/")

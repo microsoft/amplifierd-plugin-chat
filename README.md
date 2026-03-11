@@ -1,10 +1,10 @@
-# amplifierd-plugin-chat
+# amplifier-chat
 
-A chat UI plugin for [amplifierd](https://github.com/payneio/amplifierd). Adds a browser-based conversational interface for creating and managing Amplifier sessions.
+A chat UI plugin for [amplifier-distro](https://github.com/microsoft/amplifier-distro). Adds a browser-based conversational interface for creating and managing Amplifier sessions.
 
 ## What it provides
 
-When loaded into amplifierd, the plugin mounts these endpoints:
+When loaded into amplifier-distro, the plugin mounts these endpoints:
 
 | Path | Description |
 |------|-------------|
@@ -16,31 +16,31 @@ When loaded into amplifierd, the plugin mounts these endpoints:
 | `GET /chat/api/sessions/pins` | List pinned sessions |
 | `POST\|DELETE /chat/api/sessions/{id}/pin` | Pin/unpin a session |
 
-The UI uses amplifierd's native REST API for session lifecycle and SSE for streaming — no WebSocket required.
+The UI uses amplifier-distro's native REST API for session lifecycle and SSE for streaming — no WebSocket required.
 
 ## Installation
 
-If amplifierd is installed as a [uv tool](https://docs.astral.sh/uv/concepts/tools/), add the plugin with `--with`:
+If amplifier-distro is installed as a [uv tool](https://docs.astral.sh/uv/concepts/tools/), add the plugin with `--with`:
 
 ```bash
-uv tool install git+https://github.com/payneio/amplifierd \
-  --with git+https://github.com/<org>/amplifierd-plugin-chat
+uv tool install git+https://github.com/microsoft/amplifier-distro \
+  --with git+https://github.com/microsoft/amplifier-chat
 ```
 
-If amplifierd is already installed, pass `--force` to reinstall with the plugin:
+If amplifier-distro is already installed, pass `--force` to reinstall with the plugin:
 
 ```bash
-uv tool install git+https://github.com/payneio/amplifierd --force \
-  --with git+https://github.com/<org>/amplifierd-plugin-chat
+uv tool install git+https://github.com/microsoft/amplifier-distro --force \
+  --with git+https://github.com/microsoft/amplifier-chat
 ```
 
-Alternatively, if you manage amplifierd's environment directly, install the plugin with `uv pip`:
+Alternatively, if you manage amplifier-distro's environment directly, install the plugin with `uv pip`:
 
 ```bash
-uv pip install git+https://github.com/<org>/amplifierd-plugin-chat
+uv pip install git+https://github.com/microsoft/amplifier-chat
 ```
 
-amplifierd discovers it automatically via the `amplifierd.plugins` entry point on next startup. Open `http://127.0.0.1:8410/chat/` once the daemon is running.
+amplifier-distro discovers it automatically via the `amplifierd.plugins` entry point on next startup. Open `http://127.0.0.1:8410/chat/` once the daemon is running.
 
 To disable the plugin without uninstalling:
 
@@ -61,16 +61,16 @@ export CHAT_PLUGIN_HOME_DIR=/path/to/chat-data
 ### Run tests
 
 ```bash
-cd amplifierd-plugin-chat
+cd amplifier-chat
 uv run --extra test pytest -v
 ```
 
-### Run a local amplifierd instance with the plugin
+### Run a local amplifier-distro instance with the plugin
 
-No global install needed. The `dev` extra pulls amplifierd from git and runs everything in an isolated `.venv`:
+No global install needed. The `dev` extra pulls amplifier-distro from git and runs everything in an isolated `.venv`:
 
 ```bash
-cd amplifierd-plugin-chat
+cd amplifier-chat
 uv run --extra dev amplifierd serve --log-level debug
 ```
 
@@ -81,11 +81,11 @@ Then open `http://127.0.0.1:8410/chat/`.
 For iterating on the frontend without the full daemon:
 
 ```bash
-cd amplifierd-plugin-chat
+cd amplifier-chat
 uv run --extra dev python -m chat_plugin
 ```
 
-This starts a minimal FastAPI server with mock state. The UI loads and history/pin endpoints work, but session creation and execution require the full amplifierd daemon.
+This starts a minimal FastAPI server with mock state. The UI loads and history/pin endpoints work, but session creation and execution require the full amplifier-distro daemon.
 
 Options:
 

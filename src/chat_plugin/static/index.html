@@ -1937,9 +1937,15 @@
   function formatToolResult(item) {
     if (item.resultError) return null;
     const raw = item.result;
-    if (!raw || typeof raw !== 'string') return null;
+    if (!raw) return null;
     let data;
-    try { data = JSON.parse(raw); } catch { return null; }
+    if (typeof raw === 'object') {
+      data = raw;
+    } else if (typeof raw === 'string') {
+      try { data = JSON.parse(raw); } catch { return null; }
+    } else {
+      return null;
+    }
     if (!data || typeof data !== 'object') return null;
 
     // Unwrap result envelope: {error, output, success}
@@ -2634,7 +2640,6 @@
               </div>
             `}
             ${!hasSubSession && !delegateInfo && html`
-              <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
               ${item.result && smartResult && html`
                 <div class="tool-result-smart text-block"
                   dangerouslySetInnerHTML=${{ __html: smartResult.htmlContent }}></div>
@@ -2643,6 +2648,9 @@
                 <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
                   ${item.resultError || item.result || ''}
                 </div>
+              `}
+              ${!item.result && !item.resultError && html`
+                <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
               `}
             `}
             ${hasSubSession && html`<${SubSessionView}
@@ -2757,7 +2765,6 @@
         `}
         ${expanded && !hasSubSession && !delegateInfo && html`
           <div class="nested-tool-body">
-            <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
             ${item.result && smartResult && html`
               <div class="tool-result-smart text-block"
                 dangerouslySetInnerHTML=${{ __html: smartResult.htmlContent }}></div>
@@ -2766,6 +2773,9 @@
               <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
                 ${item.resultError || item.result || ''}
               </div>
+            `}
+            ${!item.result && !item.resultError && html`
+              <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
             `}
           </div>
         `}
