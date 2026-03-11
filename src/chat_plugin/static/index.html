@@ -658,7 +658,7 @@
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .activity-scroll { flex: 1; overflow-y: auto; padding: 8px; }
+    .activity-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 8px; }
 
     /* —— Message List ————————————————————————————————————————————— */
     #message-list {
@@ -2035,7 +2035,7 @@
         break;
       }
       case 'todo': {
-        const todos = data.todos || [];
+        const todos = data.todos || (item.arguments && item.arguments.todos) || [];
         if (todos.length > 0) {
           md = todos.map(function(t) {
             var icon = t.status === 'completed' ? '\u2705' : t.status === 'in_progress' ? '\u25b6' : '\u25fb';
@@ -2617,22 +2617,6 @@
     const delegateInfo = !hasSubSession ? extractDelegateResponse(item) : null;
     const smartResult = !hasSubSession && !delegateInfo ? formatToolResult(item) : null;
 
-    // Keep card sizing/layout unchanged; only auto-open once result is available.
-    useEffect(() => {
-      if (item.toolStatus === 'complete' || item.toolStatus === 'error') {
-        setExpanded(true);
-      }
-    }, [item.toolStatus]);
-
-    // Auto-expand when sub-session appears — fires only once
-    const hasAutoExpanded = useRef(false);
-    useEffect(() => {
-      if (hasSubSession && !hasAutoExpanded.current) {
-        hasAutoExpanded.current = true;
-        setExpanded(true);
-      }
-    }, [hasSubSession]);
-
     return html`
       <div class="tool-card">
         <div class="tool-header" onClick=${() => setExpanded(e => !e)}>
@@ -2676,7 +2660,7 @@
 
   function SubSessionView({ parentToolCallId, subSessionsRef, revision, depth = 0, onNavigateSession }) {
     const MAX_NESTING = 4;
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
     const sub = subSessionsRef.current.get(parentToolCallId);
     if (!sub) return null;
 
@@ -6093,7 +6077,7 @@
                   items=${chronoItems}
                   filterFn=${activityFilter}
                   sessionKey=${(activeKey || 'none') + ':activity'}
-                  showJumpControls=${false}
+                  showJumpControls=${true}
                   subSessionsRef=${subSessionsRef}
                   subSessionRevision=${subSessionRevision}
                   onNavigateSession=${navigateToSession}
