@@ -908,6 +908,24 @@
     }
     .tool-error-text { color: var(--accent-red); }
 
+    /* Delegate/task fallback: render response as markdown when sub-session data is unavailable */
+    .delegate-result-fallback { padding: 4px 0 0; }
+    .delegate-result-fallback .text-block {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+    .delegate-result-fallback .text-block :first-child { margin-top: 0; }
+
+    /* Smart tool result rendering */
+    .tool-result-smart { margin-top: 6px; font-size: 13px; }
+    .tool-result-smart :first-child { margin-top: 0; }
+    .tool-result-smart code { font-size: 11px; }
+    .tool-result-smart pre { max-height: 300px; overflow: auto; font-size: 11px; background: var(--bg-tertiary); padding: 6px 8px; border-radius: 4px; }
+    .tool-result-smart ul, .tool-result-smart ol { padding-left: 1.2em; margin: 4px 0; }
+    .tool-result-smart li { margin: 2px 0; font-size: 12px; }
+    .tool-result-smart blockquote { margin: 2px 0; padding-left: 8px; border-left: 2px solid var(--border-primary); color: var(--text-secondary); }
+
     .tool-marker { color: var(--text-muted); font-size: 11px; margin-left: 4px; }
 
     .status-running { animation: spin 1s linear infinite; display: inline-block; }
@@ -1641,10 +1659,17 @@
         }
         break;
       }
+      case 'delegate:agent_spawned':
+        // Gap 1: Delegate module emits sub_session_id; frontend expects child_id.
+        if (p.child_id == null && p.sub_session_id != null) p.child_id = p.sub_session_id;
+        break;
       case 'tool:pre':
         if (p.arguments == null && p.tool_input != null) {
           p.arguments = p.tool_input;
         }
+        // E4: Surface lineage fields so tool_call handler can detect sub-agent origin
+        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
+        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       case 'tool:post': {
         const result = p.result;
@@ -1656,11 +1681,17 @@
           p.error = result.error || null;
           p.success = !result.error;
         }
+        // E4: Surface lineage fields
+        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
+        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       }
       case 'tool:error':
         if (p.success == null) p.success = false;
         if (p.error == null) p.error = p.message || 'Unknown error';
+        // E4: Surface lineage fields
+        if (p.session_id == null && payload.session_id != null) p.session_id = payload.session_id;
+        if (p.parent_id == null && payload.parent_id != null) p.parent_id = payload.parent_id;
         break;
       case 'llm:response': {
         const usage = p.usage || {};
@@ -1870,6 +1901,196 @@
     if (field && args[field]) return String(args[field]).slice(0, 60);
     const firstVal = Object.values(args || {})[0];
     return firstVal ? String(firstVal).slice(0, 60) : '';
+  }
+
+  /**
+   * For delegate/task tools without sub-session data, extract the response
+   * text from the JSON result envelope and return it as rendered HTML.
+   * Returns null for non-delegate tools or if the response can't be extracted.
+   */
+  function extractDelegateResponse(item) {
+    if (item.toolName !== 'delegate' && item.toolName !== 'task') return null;
+    if (item.resultError) return null;
+    if (!item.result || typeof item.result !== 'string') return null;
+    let parsed = null;
+    try { parsed = JSON.parse(item.result); } catch { return null; }
+    if (!parsed || typeof parsed !== 'object') return null;
+    // Handle both envelope formats:
+    //   {response: "...", session_id: "...", agent: "..."}
+    //   {error: null, output: {response: "...", ...}, success: true}
+    const output = parsed.output && typeof parsed.output === 'object' ? parsed.output : parsed;
+    const response = output.response;
+    if (!response || typeof response !== 'string') return null;
+    return {
+      htmlContent: sanitizeHtml(marked.parse(response)),
+      agent: output.agent || parsed.agent || (item.arguments && item.arguments.agent) || null,
+      status: output.status || (parsed.success === false ? 'error' : 'success'),
+    };
+  }
+
+  /**
+   * Smart formatting for tool results. Parses JSON results from common tools
+   * and returns rendered HTML instead of raw JSON dumps.
+   * Returns null to fall back to raw display.
+   */
+  function formatToolResult(item) {
+    if (item.resultError) return null;
+    const raw = item.result;
+    if (!raw || typeof raw !== 'string') return null;
+    let data;
+    try { data = JSON.parse(raw); } catch { return null; }
+    if (!data || typeof data !== 'object') return null;
+
+    // Unwrap result envelope: {error, output, success}
+    if (('error' in data || 'success' in data) && 'output' in data) {
+      if (typeof data.output === 'object' && data.output !== null && !Array.isArray(data.output)) {
+        // Object output (read_file, grep, glob, etc.) — unwrap to inner object
+        data = data.output;
+      } else {
+        // String/null output (bash, etc.) — extract text directly
+        let text = typeof data.output === 'string' ? data.output : '';
+        if (data.error && typeof data.error === 'string') text += (text ? '\n' : '') + data.error;
+        if (text) return { htmlContent: sanitizeHtml(marked.parse('```\n' + text + '\n```')) };
+        return null;
+      }
+    }
+
+    let md = null;
+
+    switch (item.toolName) {
+      case 'read_file': {
+        const content = data.content;
+        const fp = data.file_path || '';
+        const linesRead = data.lines_read;
+        const totalLines = data.total_lines;
+        if (typeof content === 'string') {
+          const lines = content.split('\n');
+          const show = lines.slice(0, 60).join('\n');
+          const ext = fp.split('.').pop() || '';
+          md = '```' + ext + '\n' + show + '\n```';
+          if (lines.length > 60) md += '\n*...showing 60 of ' + (linesRead || lines.length) + ' lines (' + (totalLines || '?') + ' total)*';
+        }
+        break;
+      }
+      case 'write_file': {
+        const fp = data.file_path;
+        if (fp) md = 'Wrote ' + (data.bytes_written ? '**' + data.bytes_written + '** bytes to ' : '') + '`' + fp + '`';
+        break;
+      }
+      case 'edit_file': {
+        const fp = data.file_path;
+        const n = data.replacements_made;
+        if (fp) md = '**' + (n || 0) + '** replacement' + (n !== 1 ? 's' : '') + ' in `' + fp + '`';
+        break;
+      }
+      case 'apply_patch': {
+        const fp = data.path || data.file_path;
+        if (fp) md = '`' + (data.type || 'patch') + '` applied to `' + fp + '`';
+        break;
+      }
+      case 'grep': {
+        const count = data.matches_count ?? data.total_matches;
+        if (count != null) {
+          const parts = ['**' + count + '** match' + (count !== 1 ? 'es' : '') + (data.pattern ? ' for `' + data.pattern + '`' : '')];
+          const results = data.results || [];
+          for (const r of results.slice(0, 15)) {
+            if (r.context && Array.isArray(r.context)) {
+              for (const c of r.context.slice(0, 3)) {
+                parts.push((c.is_match ? '> ' : '  ') + '`' + (r.file || '') + ':' + (c.line_number || '') + '` ' + (c.content || '').trim().slice(0, 100));
+              }
+            } else if (r.file) {
+              parts.push('- `' + r.file + '`' + (r.line_number ? ':' + r.line_number : '') + (r.content ? ' ' + r.content.trim().slice(0, 80) : ''));
+            }
+          }
+          if (results.length > 15) parts.push('*...and ' + (results.length - 15) + ' more*');
+          md = parts.join('\n');
+        }
+        break;
+      }
+      case 'glob': {
+        const files = data.files || [];
+        const total = data.total_files ?? files.length;
+        const parts = ['**' + total + '** file' + (total !== 1 ? 's' : '')];
+        for (const f of files.slice(0, 20)) {
+          parts.push('- `' + (typeof f === 'string' ? f : (f.path || f)) + '`');
+        }
+        if (files.length > 20) parts.push('*...and ' + (files.length - 20) + ' more*');
+        md = parts.join('\n');
+        break;
+      }
+      case 'python_check': {
+        if (data.summary) {
+          md = data.summary;
+          const issues = data.issues || [];
+          if (issues.length > 0) {
+            md += '\n';
+            for (const iss of issues.slice(0, 10)) {
+              const loc = [iss.file, iss.line].filter(Boolean).join(':');
+              md += '\n- `' + loc + '` **' + (iss.code || '') + '** ' + (iss.message || '');
+            }
+            if (issues.length > 10) md += '\n*...and ' + (issues.length - 10) + ' more*';
+          }
+        }
+        break;
+      }
+      case 'todo': {
+        const todos = data.todos || [];
+        if (todos.length > 0) {
+          md = todos.map(function(t) {
+            var icon = t.status === 'completed' ? '\u2705' : t.status === 'in_progress' ? '\u25b6' : '\u25fb';
+            return icon + ' ' + (t.content || t.activeForm || '');
+          }).join('\n');
+        } else if (data.status) {
+          md = '*' + data.status + '* (' + (data.count || 0) + ' items)';
+        }
+        break;
+      }
+      case 'web_search': {
+        const results = data.results || [];
+        if (results.length > 0) {
+          md = results.slice(0, 8).map(function(r) {
+            return '- [' + (r.title || 'Result') + '](' + (r.url || r.link || '#') + ')';
+          }).join('\n');
+        }
+        break;
+      }
+      case 'web_fetch': {
+        const content = data.content;
+        if (typeof content === 'string') {
+          md = '```\n' + content.slice(0, 1000) + '\n```';
+          if (data.truncated || content.length > 1000) md += '\n*...truncated (' + (data.total_bytes || content.length) + ' bytes total)*';
+        }
+        break;
+      }
+      case 'load_skill': {
+        if (data.skill_name || data.name) md = 'Loaded skill: **' + (data.skill_name || data.name) + '**';
+        else if (data.skills) md = data.skills.map(function(s) { return '- **' + (typeof s === 'string' ? s : (s.name || s)) + '**'; }).join('\n');
+        break;
+      }
+      case 'mode': {
+        if (data.name || data.mode) md = 'Mode: **' + (data.name || data.mode) + '** (' + (data.operation || data.status || '') + ')';
+        else if (data.modes) md = data.modes.map(function(m) { return '- **' + (typeof m === 'string' ? m : (m.name || m)) + '**'; }).join('\n');
+        break;
+      }
+      case 'LSP': {
+        if (data.hover) {
+          const hc = typeof data.hover === 'string' ? data.hover : (data.hover.content || '');
+          if (hc) md = '```\n' + hc + '\n```';
+        } else if (data.definitions) {
+          md = data.definitions.map(function(d) { return '- `' + (d.file || d.uri || '') + ':' + (d.line || '') + '`'; }).join('\n');
+        } else if (data.references) {
+          md = '**' + data.references.length + '** references\n' +
+            data.references.slice(0, 10).map(function(r) { return '- `' + (r.file || r.uri || '') + ':' + (r.line || '') + '`'; }).join('\n');
+        } else if (data.diagnostics) {
+          md = '**' + data.diagnostics.length + '** diagnostic' + (data.diagnostics.length !== 1 ? 's' : '') + '\n' +
+            data.diagnostics.slice(0, 10).map(function(d) { return '- `' + (d.file || '') + ':' + (d.line || '') + '` ' + (d.severity || '') + ' ' + (d.message || ''); }).join('\n');
+        }
+        break;
+      }
+    }
+
+    if (!md) return null;
+    return { htmlContent: sanitizeHtml(marked.parse(md)) };
   }
 
   function getToolStatusIcon(status) {
@@ -2253,6 +2474,7 @@
         content,
         toolCalls,
         orderCounter,
+        _rev: 1,
       });
 
       // Set flag on parent item for rendering
@@ -2391,6 +2613,8 @@
       ? ('Executed in delegated session ' + item.originSessionId)
       : 'Executed in a delegated sub-agent session';
     const hasSubSession = item.subSessionId && subSessionsRef && subSessionsRef.current.has(item.toolCallId);
+    const delegateInfo = !hasSubSession ? extractDelegateResponse(item) : null;
+    const smartResult = !hasSubSession && !delegateInfo ? formatToolResult(item) : null;
 
     // Keep card sizing/layout unchanged; only auto-open once result is available.
     useEffect(() => {
@@ -2418,9 +2642,19 @@
         </div>
         ${expanded && html`
           <div class="tool-body">
-            ${!hasSubSession && html`
+            ${!hasSubSession && delegateInfo && html`
+              <div class="delegate-result-fallback">
+                <div class="delegate-result-response text-block"
+                  dangerouslySetInnerHTML=${{ __html: delegateInfo.htmlContent }}></div>
+              </div>
+            `}
+            ${!hasSubSession && !delegateInfo && html`
               <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
-              ${item.result && html`
+              ${item.result && smartResult && html`
+                <div class="tool-result-smart text-block"
+                  dangerouslySetInnerHTML=${{ __html: smartResult.htmlContent }}></div>
+              `}
+              ${item.result && !smartResult && html`
                 <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
                   ${item.resultError || item.result || ''}
                 </div>
@@ -2445,6 +2679,19 @@
     const sub = subSessionsRef.current.get(parentToolCallId);
     if (!sub) return null;
 
+    // Per-sub-session render gating: skip expensive DOM rebuild when a
+    // foreign sub-session's event bumped the global revision but THIS
+    // sub-session's data hasn't changed.  Without this, completing one
+    // sub-session tears down and rebuilds dangerouslySetInnerHTML in
+    // sibling sub-sessions, causing a visible blink.
+    const lastRevRef = useRef(-1);
+    const cachedVnodeRef = useRef(null);
+    const subRev = sub._rev ?? 0;
+    if (subRev === lastRevRef.current && cachedVnodeRef.current !== null && !collapsed) {
+      return cachedVnodeRef.current;
+    }
+    lastRevRef.current = subRev;
+
     if (depth >= MAX_NESTING) {
       return html`<div class="sub-session-truncated">
         <span class="sub-session-agent">${sub.agent || 'sub-agent'}</span>
@@ -2464,7 +2711,7 @@
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const isEmpty = allItems.length === 0 && sub.status === 'running';
 
-    return html`
+    const vnode = html`
       <div class="sub-session" style=${'--nesting-depth: ' + depth}>
         <div class="sub-session-header" onClick=${() => setCollapsed(c => !c)}>
           <span class=${'sub-session-status' + statusClass}>${statusIcon}</span>
@@ -2495,6 +2742,8 @@
         `}
       </div>
     `;
+    cachedVnodeRef.current = vnode;
+    return vnode;
   }
 
   function NestedToolCallView({ item, subSessionsRef, revision, depth, onNavigateSession }) {
@@ -2503,6 +2752,8 @@
     const isRunning = item.toolStatus === 'running';
     const argPreview = getArgPreview(item.toolName, item.arguments || {});
     const hasSubSession = subSessionsRef.current.has(item.toolCallId);
+    const delegateInfo = !hasSubSession ? extractDelegateResponse(item) : null;
+    const smartResult = !hasSubSession && !delegateInfo ? formatToolResult(item) : null;
 
     return html`
       <div class="nested-tool-call">
@@ -2511,10 +2762,22 @@
           <span class="tool-name">${item.toolName || 'tool'}</span>
           <span class="tool-arg-preview">${argPreview}</span>
         </div>
-        ${expanded && !hasSubSession && html`
+        ${expanded && !hasSubSession && delegateInfo && html`
+          <div class="nested-tool-body">
+            <div class="delegate-result-fallback">
+              <div class="delegate-result-response text-block"
+                dangerouslySetInnerHTML=${{ __html: delegateInfo.htmlContent }}></div>
+            </div>
+          </div>
+        `}
+        ${expanded && !hasSubSession && !delegateInfo && html`
           <div class="nested-tool-body">
             <pre class="tool-args-json">${JSON.stringify(item.arguments || {}, null, 2)}</pre>
-            ${item.result && html`
+            ${item.result && smartResult && html`
+              <div class="tool-result-smart text-block"
+                dangerouslySetInnerHTML=${{ __html: smartResult.htmlContent }}></div>
+            `}
+            ${item.result && !smartResult && html`
               <div class=${'tool-result-text' + (item.resultError ? ' tool-error-text' : '')}>
                 ${item.resultError || item.result || ''}
               </div>
@@ -3447,6 +3710,7 @@
         content: [],
         toolCalls: [],
         orderCounter: 0,
+        _rev: 0,
       });
       subBlockMapRef.current.set(parentToolCallId, new Map());
       subNextIndexRef.current.set(parentToolCallId, 0);
@@ -3468,6 +3732,7 @@
       if (!sub) return;
       item.order = sub.orderCounter++;
       sub.content.push(item);
+      sub._rev = (sub._rev || 0) + 1;
       bumpSubSessionRevision();
     }
 
@@ -3475,6 +3740,7 @@
       const sub = subSessionsRef.current.get(parentToolCallId);
       if (!sub) return;
       updateFn(sub);
+      sub._rev = (sub._rev || 0) + 1;
       bumpSubSessionRevision();
     }
 
@@ -3483,6 +3749,7 @@
       if (!sub) return;
       item.order = sub.orderCounter++;
       sub.toolCalls.push(item);
+      sub._rev = (sub._rev || 0) + 1;
       bumpSubSessionRevision();
     }
 
@@ -3491,6 +3758,7 @@
       if (!sub) return;
       const tc = sub.toolCalls.find(t => t.toolCallId === toolCallId);
       if (tc) updateFn(tc);
+      sub._rev = (sub._rev || 0) + 1;
       bumpSubSessionRevision();
     }
 
@@ -3500,6 +3768,7 @@
       sub.status = status;
       subBlockMapRef.current.delete(parentToolCallId);
       subNextIndexRef.current.delete(parentToolCallId);
+      sub._rev = (sub._rev || 0) + 1;
       bumpSubSessionRevision();
     }
 
@@ -3700,7 +3969,7 @@
           // Sub-session routing
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               if (msg.block_type === 'text') {
                 const itemId = makeId();
                 const subIdx = subNextIndexRef.current.get(subKey) ?? 0;
@@ -3754,7 +4023,7 @@
           // Sub-session routing
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               const delta = typeof msg.delta === 'string' ? msg.delta : '';
               if (!delta) break;
               const blockMap = subBlockMapRef.current.get(subKey);
@@ -3764,6 +4033,14 @@
                 const el = document.getElementById(textItemId);
                 if (el) {
                   el.textContent += delta;
+                  // Keep in-memory state in sync so React re-renders
+                  // (triggered by bumpSubSessionRevision) don't overwrite
+                  // the DOM with stale empty content.
+                  const sub = subSessionsRef.current.get(subKey);
+                  if (sub) {
+                    const stateItem = sub.content.find(c => c.id === textItemId);
+                    if (stateItem) stateItem.content += delta;
+                  }
                 } else {
                   updateSubSessionContent(subKey, sub => {
                     const item = sub.content.find(c => c.id === textItemId);
@@ -3809,7 +4086,7 @@
           // Sub-session routing
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               const blockMap = subBlockMapRef.current.get(subKey);
               const subIdx = msg.index ?? 0;
               const textItemId = blockMap ? blockMap.get('id-' + subIdx) : null;
@@ -3914,7 +4191,7 @@
           // Sub-session routing
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               updateSubSessionContent(subKey, sub => {
                 const item = sub.content.slice().reverse().find(c => c.type === 'thinking' && c.streaming);
                 if (item) item.content += msg.delta;
@@ -3935,7 +4212,7 @@
           // Sub-session routing
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               updateSubSessionContent(subKey, sub => {
                 const item = sub.content.slice().reverse().find(c => c.type === 'thinking' && c.streaming);
                 if (item) {
@@ -3973,7 +4250,7 @@
           // Sub-session routing
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               const itemId = makeId();
               // Register in toolMapRef so deeper session_forks can resolve
               toolMapRef.current[msg.tool_call_id] = itemId;
@@ -4035,7 +4312,7 @@
           // Check if this is a tool result for a tool INSIDE a sub-session
           {
             const subKey = resolveSubSessionKey(msg);
-            if (subKey && (msg.nesting_depth ?? 0) > 0) {
+            if (subKey) {
               updateSubSessionToolCall(subKey, msg.tool_call_id, tc => {
                 tc.toolStatus = msg.success ? 'complete' : 'error';
                 tc.result = msg.output;
