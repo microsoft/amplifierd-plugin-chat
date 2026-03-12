@@ -405,6 +405,82 @@
     return lines.join('\n');
   }
 
+  function serializeFindings(allFindings, checkedMap) {
+    var checked = allFindings.filter(function (f, i) {
+      return checkedMap[i] !== false;
+    });
+    if (!checked.length) return '';
+
+    var lines = ['\n## Automated Findings'];
+
+    var groups = [
+      { source: 'github',     header: '### Related Issues' },
+      { source: 'session',    header: '### Session Errors' },
+      { source: 'server_log', header: '### Server Logs' },
+    ];
+
+    groups.forEach(function (group) {
+      var groupFindings = checked.filter(function (f) {
+        return f.source === group.source;
+      });
+      if (!groupFindings.length) return;
+
+      lines.push('');
+      lines.push(group.header);
+      lines.push('');
+
+      groupFindings.forEach(function (f) {
+        if (group.source === 'github') {
+          var summary = f.title || f.summary || f.url || '';
+          var url = f.url || '';
+          var entry = '- [' + summary + '](' + url + ')';
+          if (f.state) {
+            entry += ' `' + f.state + '`';
+          }
+          lines.push(entry);
+          if (f.relevance) {
+            lines.push('> ' + f.relevance);
+          }
+        } else if (group.source === 'session') {
+          var sessionSummary = f.title || f.summary || '';
+          var item = '- **' + sessionSummary + '**';
+          if (f.error && f.error.type) {
+            item += ' `' + f.error.type + '`';
+          }
+          lines.push(item);
+          if (f.error) {
+            if (f.error.message) {
+              lines.push('  ' + f.error.message);
+            }
+            if (f.error.traceback && f.error.traceback.length) {
+              lines.push('  ```');
+              f.error.traceback.forEach(function (frame) {
+                lines.push('  ' + frame);
+              });
+              lines.push('  ```');
+            }
+          }
+        } else if (group.source === 'server_log') {
+          var logSummary = f.title || f.summary || '';
+          lines.push('- **' + logSummary + '**');
+          if (f.context_lines && f.context_lines.length) {
+            lines.push('  ```');
+            f.context_lines.forEach(function (line) {
+              lines.push('  ' + line);
+            });
+            lines.push('  ```');
+          } else if (f.log_line) {
+            lines.push('  ```');
+            lines.push('  ' + f.log_line);
+            lines.push('  ```');
+          }
+        }
+      });
+    });
+
+    return lines.join('\n');
+  }
+
   function extractFindings(text) {
     try {
       // Strip markdown code fences (```json ... ``` or ``` ... ```)
@@ -478,7 +554,7 @@
     var analysisComplete = false;
     var responseText = '';
     var findings = [];
-    var findingChecked = {}; // Used by renderFindings (next task)
+    var findingChecked = {}; // Tracks per-finding checkbox state by index
     var analysisSection = el('div', { className: 'amp-fb-analysis' });
 
     function closeSSE() {
@@ -818,11 +894,17 @@
         }
       );
 
+      if (findings.length > 0) {
+        body += serializeFindings(findings, findingChecked);
+      }
+
       var surface = opts.context && opts.context.app || '';
       var url = buildGitHubUrl(category, title, body, opts.repo || REPO, surface);
 
       submitBtn.textContent = 'Opening GitHub\u2026';
       submitBtn.setAttribute('disabled', 'true');
+
+      if (!analysisComplete) { cancelAnalysis(); }
 
       window.open(url, '_blank', 'noopener');
 
