@@ -3132,6 +3132,15 @@
     subSessionsRef,
     subSessionRevision,
     onNavigateSession,
+    // Turn correlation props
+    turnMap,
+    itemTurnMap,
+    hoveredTurnId,
+    setHoveredTurnId,
+    isActivityPanel = false,
+    onTurnSeparatorClick,
+    onScrollTurnChange,
+    onItemClick,
   }) {
     const filtered = filterFn ? items.filter(filterFn) : items;
     const sorted = [...filtered].sort((a, b) => a.order - b.order);
@@ -3219,12 +3228,83 @@
       }
     }, [scrollState.canBottom]);
 
+    // Track which turn is currently at the top of the activity panel scroll
+    const observerRef = useRef(null);
+    useEffect(() => {
+      if (!isActivityPanel || !onScrollTurnChange || !listRef.current) return;
+      if (observerRef.current) observerRef.current.disconnect();
+
+      const listEl = listRef.current;
+      const updateCurrentTurn = () => {
+        const separators = listEl.querySelectorAll('.turn-separator[data-turn-id]');
+        let currentTurn = null;
+        const listRect = listEl.getBoundingClientRect();
+        for (const sep of separators) {
+          const rect = sep.getBoundingClientRect();
+          if (rect.top <= listRect.top + 40) {
+            currentTurn = sep.getAttribute('data-turn-id');
+          }
+        }
+        if (currentTurn) onScrollTurnChange(currentTurn);
+      };
+
+      const observer = new IntersectionObserver(() => {
+        updateCurrentTurn();
+      }, {
+        root: listEl,
+        rootMargin: '-40px 0px 0px 0px',
+        threshold: 0,
+      });
+
+      // Observe turn separators after DOM settles
+      const timer = setTimeout(() => {
+        const seps = listEl.querySelectorAll('.turn-separator[data-turn-id]');
+        seps.forEach(sep => observer.observe(sep));
+        // Also set initial turn
+        updateCurrentTurn();
+      }, 100);
+
+      observerRef.current = observer;
+      return () => {
+        clearTimeout(timer);
+        observer.disconnect();
+      };
+    }, [isActivityPanel, onScrollTurnChange, sorted.length, sessionKey]);
+
     return html`
       <div class="message-list-wrap">
         <div id="message-list" ref=${listRef} onScroll=${updateScrollState}>
-          ${sorted.map(item => html`<${ChronoItem} key=${item.id} item=${item}
-            subSessionsRef=${subSessionsRef} subSessionRevision=${subSessionRevision}
-            onNavigateSession=${onNavigateSession} />`)}
+          ${sorted.map((item, i) => {
+            const turnId = itemTurnMap ? itemTurnMap.get(item.id) : null;
+            const prevTurnId = i > 0 ? (itemTurnMap ? itemTurnMap.get(sorted[i - 1].id) : null) : null;
+            const showSep = isActivityPanel && turnMap && turnId && turnId !== prevTurnId;
+            const isItemHighlighted = hoveredTurnId && turnId === hoveredTurnId;
+            const isItemDimmed = hoveredTurnId && turnId && turnId !== hoveredTurnId;
+            const turn = showSep ? turnMap.get(turnId) : null;
+
+            const itemCls = isItemHighlighted ? 'turn-highlighted' + (isActivityPanel ? ' turn-highlighted-border' : '')
+              : isItemDimmed ? 'turn-dimmed' : '';
+
+            return html`
+              ${showSep && turn && html`<${TurnSeparator}
+                key=${'sep-' + turnId}
+                turn=${turn}
+                isHighlighted=${hoveredTurnId === turnId}
+                onClick=${() => onTurnSeparatorClick && onTurnSeparatorClick(turnId)}
+              />`}
+              <div class=${itemCls || undefined}
+                data-turn-id=${turnId || undefined}
+                onMouseEnter=${() => setHoveredTurnId && turnId && setHoveredTurnId(turnId)}
+                onMouseLeave=${() => setHoveredTurnId && setHoveredTurnId(null)}
+                onClick=${() => !isActivityPanel && onItemClick && turnId && onItemClick(turnId)}
+                style=${!isActivityPanel && turnId ? 'cursor: pointer;' : undefined}>
+                <${ChronoItem} key=${item.id} item=${item}
+                  isActivity=${isActivityPanel}
+                  subSessionsRef=${subSessionsRef} subSessionRevision=${subSessionRevision}
+                  onNavigateSession=${onNavigateSession} />
+              </div>
+            `;
+          })}
           <div ref=${bottomRef}></div>
         </div>
         ${showJumpControls && scrollState.hasOverflow && html`
@@ -3767,6 +3847,7 @@
     const activeKeyRef = useRef(null);
     const sessionsRef = useRef(new Map());
     const chronoItemsRef = useRef([]);
+    const activityScrollRef = useRef(null);
     const turnCountRef = useRef(0);
     // Default CWD — amplifierd doesn't inject __AMPLIFIER_WORKSPACE_ROOT
     const defaultCwdRef = useRef('~');
@@ -6359,6 +6440,23 @@
               subSessionsRef=${subSessionsRef}
               subSessionRevision=${subSessionRevision}
               onNavigateSession=${navigateToSession}
+              turnMap=${viewMode === 'workspace' ? turnMap : undefined}
+              itemTurnMap=${viewMode === 'workspace' ? itemTurnMap : undefined}
+              hoveredTurnId=${viewMode === 'workspace' ? hoveredTurnId : undefined}
+              setHoveredTurnId=${viewMode === 'workspace' ? setHoveredTurnId : undefined}
+              onItemClick=${viewMode === 'workspace' ? (turnId) => {
+                if (!activityScrollRef.current) return;
+                const sep = activityScrollRef.current.querySelector('.turn-separator[data-turn-id="' + turnId + '"]');
+                if (sep) {
+                  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                  sep.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'start' });
+                  const items = activityScrollRef.current.querySelectorAll('[data-turn-id="' + turnId + '"]');
+                  items.forEach(el => {
+                    el.classList.add('turn-scroll-target');
+                    setTimeout(() => el.classList.remove('turn-scroll-target'), 800);
+                  });
+                }
+              } : undefined}
             />
             <${InputArea}
               onSend=${sendMessage}
@@ -6376,7 +6474,22 @@
             ></div>
             <div class="activity-panel" style=${{ width: activityPanelWidth + 'px' }}>
               <div class="activity-panel-header">Activity</div>
-              <div class="activity-scroll">
+              <${ActivityBreadcrumb}
+                turnMap=${turnMap}
+                scrollTurnId=${activeTurnId}
+                onNavigateToMessage=${(turnId) => {
+                  const turn = turnMap.get(turnId);
+                  if (!turn) return;
+                  const el = document.getElementById(turn.userItem.id);
+                  if (el) {
+                    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    el.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'center' });
+                    el.classList.add('turn-scroll-target');
+                    setTimeout(() => el.classList.remove('turn-scroll-target'), 800);
+                  }
+                }}
+              />
+              <div class="activity-scroll" ref=${activityScrollRef}>
                 <${MessageList}
                   items=${chronoItems}
                   filterFn=${activityFilter}
@@ -6385,6 +6498,23 @@
                   subSessionsRef=${subSessionsRef}
                   subSessionRevision=${subSessionRevision}
                   onNavigateSession=${navigateToSession}
+                  turnMap=${turnMap}
+                  itemTurnMap=${itemTurnMap}
+                  hoveredTurnId=${hoveredTurnId}
+                  setHoveredTurnId=${setHoveredTurnId}
+                  isActivityPanel=${true}
+                  onTurnSeparatorClick=${(turnId) => {
+                    const turn = turnMap.get(turnId);
+                    if (!turn) return;
+                    const el = document.getElementById(turn.userItem.id);
+                    if (el) {
+                      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                      el.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'center' });
+                      el.classList.add('turn-scroll-target');
+                      setTimeout(() => el.classList.remove('turn-scroll-target'), 800);
+                    }
+                  }}
+                  onScrollTurnChange=${setActiveTurnId}
                 />
               </div>
             </div>
