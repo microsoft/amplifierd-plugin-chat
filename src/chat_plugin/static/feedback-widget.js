@@ -267,6 +267,85 @@
     '  to   { opacity: 1; transform: translateY(0); }',
     '}',
 
+    /* --- Analysis section --- */
+    '.amp-fb-analysis {',
+    '  margin-top: 16px; padding: 12px;',
+    '  border: 1px solid var(--canvas-mist, var(--border, rgba(255,255,255,0.08)));',
+    '  border-radius: var(--radius-input, 10px);',
+    '  background: var(--canvas, var(--bg-primary, #0d0d0d));',
+    '  font-size: 13px; color: var(--ink-slate, var(--text-secondary, #999));',
+    '  min-height: 48px;',
+    '}',
+    '.amp-fb-analysis-loading {',
+    '  display: flex; align-items: center; gap: 10px;',
+    '}',
+    '.amp-fb-spinner {',
+    '  width: 18px; height: 18px; border-radius: 50%;',
+    '  border: 2px solid var(--canvas-mist, var(--border, rgba(255,255,255,0.08)));',
+    '  border-top-color: var(--signal, var(--accent, #5B4DE3));',
+    '  animation: amp-fb-spin 0.8s linear infinite;',
+    '}',
+    '@keyframes amp-fb-spin {',
+    '  to { transform: rotate(360deg); }',
+    '}',
+    '.amp-fb-analysis-cancel {',
+    '  background: none; border: none; color: var(--ink-fog, var(--text-muted, #555));',
+    '  font-size: 12px; cursor: pointer; text-decoration: underline;',
+    '  margin-left: auto; padding: 0;',
+    '}',
+    '.amp-fb-analysis-cancel:hover { color: var(--ink, var(--text-primary, #e8e8e8)); }',
+    '.amp-fb-analysis-error {',
+    '  color: var(--error, #ef4444); font-size: 13px;',
+    '}',
+    '.amp-fb-findings-group {',
+    '  margin-top: 8px;',
+    '}',
+    '.amp-fb-findings-group-header {',
+    '  font-size: 12px; font-weight: 600; margin-bottom: 6px;',
+    '  color: var(--ink-slate, var(--text-secondary, #999));',
+    '}',
+    '.amp-fb-finding {',
+    '  display: flex; align-items: flex-start; gap: 8px;',
+    '  padding: 6px 0; border-bottom: 1px solid var(--canvas-mist, var(--border, rgba(255,255,255,0.08)));',
+    '}',
+    '.amp-fb-finding:last-child { border-bottom: none; }',
+    '.amp-fb-finding input[type=checkbox] {',
+    '  margin-top: 3px; accent-color: var(--signal, var(--accent, #5B4DE3));',
+    '}',
+    '.amp-fb-finding-content {',
+    '  flex: 1; min-width: 0;',
+    '}',
+    '.amp-fb-finding-summary {',
+    '  font-size: 13px; font-weight: 500;',
+    '  color: var(--ink, var(--text-primary, #e8e8e8));',
+    '}',
+    '.amp-fb-finding-detail {',
+    '  font-size: 12px; color: var(--ink-slate, var(--text-secondary, #999));',
+    '  margin-top: 4px;',
+    '}',
+    '.amp-fb-finding-detail pre {',
+    '  white-space: pre-wrap; word-break: break-word;',
+    '  font-family: var(--font-mono, "Fira Code", monospace);',
+    '  font-size: 11px; margin-top: 4px;',
+    '  padding: 6px; border-radius: 4px;',
+    '  background: var(--canvas-warm, var(--bg-secondary, #1E1E1E));',
+    '}',
+    '.amp-fb-finding-link {',
+    '  font-size: 12px; color: var(--signal, var(--accent, #5B4DE3));',
+    '  text-decoration: none;',
+    '}',
+    '.amp-fb-finding-link:hover { text-decoration: underline; }',
+    '.amp-fb-finding-status {',
+    '  font-size: 11px; font-weight: 600; padding: 1px 6px;',
+    '  border-radius: 4px; display: inline-block; margin-left: 6px;',
+    '}',
+    '.amp-fb-finding-status.open {',
+    '  background: rgba(34,197,94,0.15); color: var(--accent-green, #22c55e);',
+    '}',
+    '.amp-fb-finding-status.closed {',
+    '  background: rgba(239,68,68,0.15); color: var(--error, #ef4444);',
+    '}',
+
     /* --- Reduced motion --- */
     '@media (prefers-reduced-motion: reduce) {',
     '  .amp-fb-fab, .amp-fb-card, .amp-fb-backdrop {',
@@ -326,12 +405,143 @@
     return lines.join('\n');
   }
 
+  function extractFindings(text) {
+    try {
+      // Strip markdown code fences (```json ... ``` or ``` ... ```)
+      var stripped = text.replace(/```[\w]*\n?/g, '').replace(/```/g, '');
+      var first = stripped.indexOf('[');
+      var last = stripped.lastIndexOf(']');
+      if (first === -1 || last === -1 || last <= first) return [];
+      return JSON.parse(stripped.substring(first, last + 1));
+    } catch (e) {
+      return [];
+    }
+  }
+
   /* ------------------------------------------------------------------ */
   /*  Modal                                                              */
   /* ------------------------------------------------------------------ */
 
   function openModal(opts) {
     var category = 'general';
+
+    // Analysis lifecycle state
+    var apiBase = (window.location.origin || '') + '/chat/api';
+    var analysisSessionId = null;
+    var analysisSSE = null;
+    var analysisComplete = false;
+    var responseText = '';
+    var findings = [];
+    var findingChecked = {};
+    var analysisSection = el('div', { className: 'amp-fb-analysis' });
+
+    function updateAnalysisUI(state, errorMsg) {
+      analysisSection.innerHTML = '';
+      if (state === 'loading') {
+        var spinner = el('div', { className: 'amp-fb-spinner' });
+        var loadingRow = el('div', { className: 'amp-fb-analysis-loading' }, [
+          spinner,
+          el('span', null, ['Analyzing session\u2026']),
+        ]);
+        var cancelBtn = el('button', {
+          className: 'amp-fb-analysis-cancel',
+          type: 'button',
+          onClick: function () { cancelAnalysis(); updateAnalysisUI('idle'); },
+        }, ['Cancel']);
+        loadingRow.appendChild(cancelBtn);
+        analysisSection.appendChild(loadingRow);
+      } else if (state === 'error') {
+        analysisSection.appendChild(
+          el('div', { className: 'amp-fb-analysis-error' }, [errorMsg || 'Analysis failed.'])
+        );
+      } else if (state === 'complete') {
+        renderFindings();
+      } else {
+        // idle
+        analysisSection.textContent = '';
+      }
+    }
+
+    function startAnalysis() {
+      var getSessionId = opts.getSessionId;
+      var currentSessionId = getSessionId ? getSessionId() : null;
+      if (!currentSessionId) {
+        updateAnalysisUI('idle');
+        return;
+      }
+      updateAnalysisUI('loading');
+      fetch(apiBase + '/feedback/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: currentSessionId }),
+      })
+        .then(function (res) {
+          if (!res.ok) throw new Error('Analysis request failed: ' + res.status);
+          return res.json();
+        })
+        .then(function (data) {
+          analysisSessionId = data.analysis_session_id;
+          subscribeToSSE(analysisSessionId);
+        })
+        .catch(function (err) {
+          updateAnalysisUI('error', err.message);
+        });
+    }
+
+    function subscribeToSSE(sessionId) {
+      var evtSource = new EventSource('/events?session=' + encodeURIComponent(sessionId));
+      analysisSSE = evtSource;
+
+      evtSource.addEventListener('content_block:delta', function (e) {
+        try {
+          var payload = JSON.parse(e.data);
+          var delta = payload.delta || payload;
+          responseText += (delta.text || delta.thinking || '');
+        } catch (ex) { /* ignore parse errors */ }
+      });
+
+      function onComplete() {
+        analysisComplete = true;
+        if (analysisSSE) { analysisSSE.close(); analysisSSE = null; }
+        findings = extractFindings(responseText);
+        renderFindings();
+      }
+
+      evtSource.addEventListener('orchestrator:complete', onComplete);
+      evtSource.addEventListener('execution:end', onComplete);
+
+      evtSource.onerror = function () {
+        if (analysisComplete) return;
+        // Try to parse whatever we have accumulated
+        if (responseText) {
+          findings = extractFindings(responseText);
+          if (findings.length > 0) {
+            analysisComplete = true;
+            if (analysisSSE) { analysisSSE.close(); analysisSSE = null; }
+            renderFindings();
+            return;
+          }
+        }
+        updateAnalysisUI('error', 'Connection to analysis stream lost.');
+        if (analysisSSE) { analysisSSE.close(); analysisSSE = null; }
+      };
+    }
+
+    function cancelAnalysis() {
+      if (analysisSSE) { analysisSSE.close(); analysisSSE = null; }
+      if (analysisSessionId && !analysisComplete) {
+        fetch('/sessions/' + encodeURIComponent(analysisSessionId) + '/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ immediate: true }),
+        }).catch(function () { /* best effort */ });
+      }
+    }
+
+    function renderFindings() {
+      analysisSection.textContent = findings.length + ' finding(s) ready.';
+    }
+
     var backdrop = el('div', {
       className: 'amp-fb-backdrop',
       role: 'presentation',
@@ -422,6 +632,8 @@
         el('label', { className: 'amp-fb-label', 'for': 'amp-fb-desc-input' }, ['Details']),
         descInput,
       ]),
+      // Analysis
+      analysisSection,
       // Actions
       el('div', { className: 'amp-fb-actions' }, [
         el('button', {
@@ -440,6 +652,9 @@
 
     // Focus management
     titleInput.focus();
+
+    // Kick off analysis
+    startAnalysis();
 
     // Keyboard handling
     function onKey(e) {
@@ -466,6 +681,7 @@
     var triggerEl = opts._triggerEl;
 
     function closeModal() {
+      cancelAnalysis();
       document.removeEventListener('keydown', onKey);
       if (backdrop.parentNode) { backdrop.parentNode.removeChild(backdrop); }
       if (triggerEl) { try { triggerEl.focus(); } catch (e) { /* noop */ } }

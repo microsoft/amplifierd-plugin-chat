@@ -3429,6 +3429,7 @@
     const [executing, setExecuting] = useState(false);
     const [pendingApproval, setPendingApproval] = useState(null);
     const [sessionId, setSessionId] = useState(null);
+    const sessionIdRef = useRef(null);
     const [cwd, setCwd] = useState('~');
     const [defaultCwd, setDefaultCwd] = useState('~');
     const [turnCount, setTurnCount] = useState(0);
@@ -3468,6 +3469,8 @@
       } catch {}
       return 'dark';
     });
+
+    useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
     // Feedback widget
     const feedbackSlotRef = useRef(null);
@@ -3574,6 +3577,7 @@
           mode: 'header',
           container: slot,
           context: { app: 'chat' },
+          getSessionId: function() { return sessionIdRef.current; },
         });
       }
     }, []);
