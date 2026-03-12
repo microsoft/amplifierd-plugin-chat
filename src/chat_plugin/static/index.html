@@ -910,6 +910,22 @@
 
     /* Delegate/task fallback: render response as markdown when sub-session data is unavailable */
     .delegate-result-fallback { padding: 4px 0 0; }
+
+    /* Sub-session fetch error indicator */
+    .sub-session-fetch-error {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      margin-top: 4px;
+      background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent-red) 25%, transparent);
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .sub-session-fetch-error .error-icon { color: var(--accent-red); flex-shrink: 0; }
+    .sub-session-fetch-error .error-detail { color: var(--text-muted); font-size: 11px; }
     .delegate-result-fallback .text-block {
       margin: 0;
       font-size: 13px;
@@ -1556,6 +1572,7 @@
     },
     async getTranscript(sessionId) {
       const resp = await fetch(`${API_BASE}/sessions/${sessionId}/transcript`);
+      if (!resp.ok) throw new Error(`Transcript fetch failed: HTTP ${resp.status}`);
       return resp.json();
     },
     async sendCommand(sessionId, command) {
@@ -2447,20 +2464,33 @@
       try {
         const data = await api.getTranscript(del.childSessionId);
         const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
-        if (transcript.length === 0) return null;
+        if (transcript.length === 0) return { del, childItems: null, error: null };
 
         const childItems = transcriptToChronoItems(transcript);
-        return { del, childItems };
-      } catch {
-        // Child transcript unavailable (deleted, different project, etc.) — skip silently
-        return null;
+        return { del, childItems, error: null };
+      } catch (err) {
+        console.warn(`[transcript] Failed to fetch child session ${del.childSessionId}:`, err.message || err);
+        return { del, childItems: null, error: err.message || 'Failed to load sub-session transcript' };
       }
     });
 
     const results = await Promise.all(fetches);
 
+    // Mark failed fetches on parent items so the UI can show an error indicator
     for (const result of results) {
-      if (!result) continue;
+      if (result.error || !result.childItems) {
+        const parentItem = items.find(i => i.id === result.del.parentItemId);
+        if (parentItem) {
+          parentItem.subSessionFetchFailed = true;
+          parentItem.subSessionFetchError = result.error || 'Sub-session transcript is empty';
+          parentItem.subSessionFetchAgent = result.del.agent;
+        }
+        continue;
+      }
+    }
+
+    for (const result of results) {
+      if (!result.childItems) continue;
       const { del, childItems } = result;
 
       // Build SubSession from child's chrono items
@@ -2504,7 +2534,7 @@
     // Recurse: check if any child sub-sessions themselves contain delegations
     // by scanning the newly added toolCalls for delegate/task results
     for (const result of results) {
-      if (!result) continue;
+      if (!result.childItems) continue;
       const { del, childItems } = result;
       const nestedDelegations = findDelegationChildSessions(childItems);
       if (nestedDelegations.length > 0) {
@@ -2623,8 +2653,9 @@
       ? ('Executed in delegated session ' + item.originSessionId)
       : 'Executed in a delegated sub-agent session';
     const hasSubSession = item.subSessionId && subSessionsRef && subSessionsRef.current.has(item.toolCallId);
-    const delegateInfo = !hasSubSession ? extractDelegateResponse(item) : null;
-    const smartResult = !hasSubSession && !delegateInfo ? formatToolResult(item) : null;
+    const fetchFailed = item.subSessionFetchFailed;
+    const delegateInfo = !hasSubSession && !fetchFailed ? extractDelegateResponse(item) : null;
+    const smartResult = !hasSubSession && !fetchFailed && !delegateInfo ? formatToolResult(item) : null;
 
     return html`
       <div class="tool-card">
@@ -2636,13 +2667,20 @@
         </div>
         ${expanded && html`
           <div class="tool-body">
+            ${fetchFailed && html`
+              <div class="sub-session-fetch-error">
+                <span class="error-icon">!</span>
+                <span>Could not load sub-session transcript${item.subSessionFetchAgent ? (' for ' + item.subSessionFetchAgent) : ''}</span>
+                <span class="error-detail">${item.subSessionFetchError || ''}</span>
+              </div>
+            `}
             ${!hasSubSession && delegateInfo && html`
               <div class="delegate-result-fallback">
                 <div class="delegate-result-response text-block"
                   dangerouslySetInnerHTML=${{ __html: delegateInfo.htmlContent }}></div>
               </div>
             `}
-            ${!hasSubSession && !delegateInfo && html`
+            ${!hasSubSession && !fetchFailed && !delegateInfo && html`
               ${item.result && smartResult && html`
                 <div class="tool-result-smart text-block"
                   dangerouslySetInnerHTML=${{ __html: smartResult.htmlContent }}></div>
