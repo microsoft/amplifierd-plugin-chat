@@ -806,34 +806,27 @@
         addLogEntry('Connected');
       };
 
-      // Extract delta text from the SSE envelope.
-      // amplifierd sends: data: {"event":"content_block:delta","data":{...},"delta":{...}}
-      function extractDelta(raw) {
-        var text = '';
-        // Try top-level delta first (direct format)
-        if (raw.delta) {
-          text = (typeof raw.delta === 'object')
-            ? (raw.delta.text || raw.delta.thinking || '')
-            : raw.delta;
-        }
-        // Try nested data.delta (envelope format)
-        if (!text && raw.data && raw.data.delta) {
-          var d = raw.data.delta;
-          text = (typeof d === 'object') ? (d.text || d.thinking || '') : d;
-        }
-        return text;
-      }
+      // No longer needed — delta extraction is inline in the event handler.
 
       var deltaCount = 0;
       evtSource.addEventListener('content_block:delta', function (e) {
         try {
           var raw = JSON.parse(e.data);
-          var text = extractDelta(raw);
+          // amplifierd envelope: {event, session_id, data: {delta: {text: "..."}}}
+          var payload = raw.data || raw;
+          var delta = payload.delta;
+          var text = '';
+          if (typeof delta === 'string') {
+            text = delta;
+          } else if (delta && typeof delta === 'object') {
+            text = delta.text || delta.thinking || '';
+          }
           deltaCount++;
-          if (deltaCount <= 3 || deltaCount % 50 === 0) {
-            console.log('[feedback-analysis] delta #' + deltaCount +
-              ' text=' + (text ? text.length + 'ch' : '(empty)') +
-              ' total=' + responseText.length + 'ch');
+          if (deltaCount <= 5 || deltaCount % 50 === 0) {
+            console.log('[feedback-analysis] delta #' + deltaCount,
+              'text=' + (text ? text.length + 'ch' : '(empty)'),
+              'total=' + (responseText.length + text.length) + 'ch',
+              deltaCount <= 2 ? JSON.stringify(raw).substring(0, 200) : '');
           }
           if (text) {
             responseText += text;
@@ -845,8 +838,9 @@
       evtSource.addEventListener('tool:pre', function (e) {
         try {
           var raw = JSON.parse(e.data);
-          var toolName = raw.tool_name || raw.name || (raw.data && raw.data.tool_name) || '';
-          var toolInput = raw.tool_input || raw.arguments || (raw.data && (raw.data.tool_input || raw.data.arguments)) || '';
+          var p = raw.data || raw;  // unwrap envelope
+          var toolName = p.tool_name || p.name || '';
+          var toolInput = p.tool_input || p.arguments || '';
           if (typeof toolInput === 'object') toolInput = JSON.stringify(toolInput);
 
           if (toolName === 'bash' && toolInput.indexOf('gh issue') !== -1) {
