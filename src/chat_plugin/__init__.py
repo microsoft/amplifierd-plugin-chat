@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -33,6 +34,18 @@ def create_router(state: Any) -> APIRouter:
     # where settings.distro_home is the path to ~/.amplifier-distro.
     distro_ns = getattr(state, "distro", None)
     distro_home = getattr(getattr(distro_ns, "settings", None), "distro_home", None)
+
+    # When running standalone (without the distro plugin), register the
+    # overlay bundle so that amplifierd's built-in prewarm warms the user's
+    # customized bundle instead of the raw upstream from GitHub.
+    if distro_ns is None:
+        bundle_registry = getattr(state, "bundle_registry", None)
+        if bundle_registry:
+            default_distro_home = Path.home() / ".amplifier-distro"
+            overlay_yaml = default_distro_home / "bundle" / "bundle.yaml"
+            if overlay_yaml.exists():
+                distro_home = str(default_distro_home)
+                bundle_registry.register({"distro": str(overlay_yaml.parent)})
 
     router = APIRouter()
 
