@@ -3625,6 +3625,7 @@
     const [chronoItems, setChronoItems] = useState([]);
     const [executing, setExecuting] = useState(false);
     const executingRef = useRef(false);
+    const activeDelegatesRef = useRef(0);
     const [pendingApproval, setPendingApproval] = useState(null);
     const [sessionId, setSessionId] = useState(null);
     const sessionIdRef = useRef(null);
@@ -4632,6 +4633,7 @@
           // Check if this result completes a sub-session (parent delegate/task finishing)
           if (subSessionsRef.current.has(msg.tool_call_id)) {
             endSubSession(msg.tool_call_id, msg.success ? 'complete' : 'error');
+            if (activeDelegatesRef.current > 0) activeDelegatesRef.current -= 1;
             // Still update the tool call item status in main chronoItems
             const itemId = toolMapRef.current[msg.tool_call_id];
             cycleRef.current++;
@@ -4665,6 +4667,7 @@
         }
 
         case 'session_fork': {
+          activeDelegatesRef.current += 1;
           const childId = typeof msg.child_id === 'string' ? msg.child_id : null;
           applySessionForkLineage(msg);
 
@@ -4742,8 +4745,10 @@
               });
               return next;
             });
-            setExecuting(false);
-            tryDrainQueue();
+            if (activeDelegatesRef.current <= 0) {
+              setExecuting(false);
+              tryDrainQueue();
+            }
             setTurnCount(nextTurn ?? (turnCountRef.current + 1));
           }
           // Flush accumulated token usage as a chrono item
@@ -4773,8 +4778,10 @@
             next.set(ownerKey, { ...s, status: 'idle' });
             return next;
           });
-          setExecuting(false);
-          tryDrainQueue();
+          if (activeDelegatesRef.current <= 0) {
+            setExecuting(false);
+            tryDrainQueue();
+          }
           break;
 
         case 'execution_error': {
@@ -4794,8 +4801,10 @@
             });
             return next;
           });
-          setExecuting(false);
-          tryDrainQueue();
+          if (activeDelegatesRef.current <= 0) {
+            setExecuting(false);
+            tryDrainQueue();
+          }
           setChronoItems(prev => [...prev, {
             id: makeId(), type: 'text', role: 'system',
             content: 'Warning: ' + (msg.error || 'Unknown error'),
@@ -5532,6 +5541,7 @@
       setTurnCount(0);
       // Cancel any countdown and clear queue from the previous session
       cancelCountdown();
+      activeDelegatesRef.current = 0;
       if (prevKey) clearSessionQueue(prevKey);
       setExecuting(false);
       setPendingApproval(null);
@@ -5889,6 +5899,7 @@
       }
       // Cancel any active countdown when switching away
       cancelCountdown();
+      activeDelegatesRef.current = 0;
       activeKeyRef.current = key;
 
       // Load target session
