@@ -561,13 +561,17 @@
       if (analysisSSE) { analysisSSE.close(); analysisSSE = null; }
     }
 
+    var statusTextEl = null;
+
     function updateAnalysisUI(state, errorMsg) {
       analysisSection.innerHTML = '';
+      statusTextEl = null;
       if (state === 'loading') {
         var spinner = el('div', { className: 'amp-fb-spinner' });
+        statusTextEl = el('span', null, ['Starting analysis\u2026']);
         var loadingRow = el('div', { className: 'amp-fb-analysis-loading' }, [
           spinner,
-          el('span', null, ['Analyzing session\u2026']),
+          statusTextEl,
         ]);
         var cancelBtn = el('button', {
           className: 'amp-fb-analysis-cancel',
@@ -585,6 +589,12 @@
       } else {
         // idle
         analysisSection.innerHTML = '';
+      }
+    }
+
+    function updateStatusText(text) {
+      if (statusTextEl) {
+        statusTextEl.textContent = text;
       }
     }
 
@@ -623,17 +633,70 @@
       console.log('[feedback-analysis] Opening SSE:', sseUrl);
       var evtSource = new EventSource(sseUrl);
       analysisSSE = evtSource;
+      var foundingsCount = 0;
 
       evtSource.onopen = function () {
         console.log('[feedback-analysis] SSE connected');
+        updateStatusText('Connected, waiting for analysis\u2026');
       };
+
+      // Extract delta text from the SSE envelope.
+      // amplifierd sends: data: {"event":"content_block:delta","data":{...},"delta":{...}}
+      function extractDelta(raw) {
+        var text = '';
+        // Try top-level delta first (direct format)
+        if (raw.delta) {
+          text = (typeof raw.delta === 'object')
+            ? (raw.delta.text || raw.delta.thinking || '')
+            : raw.delta;
+        }
+        // Try nested data.delta (envelope format)
+        if (!text && raw.data && raw.data.delta) {
+          var d = raw.data.delta;
+          text = (typeof d === 'object') ? (d.text || d.thinking || '') : d;
+        }
+        return text;
+      }
 
       evtSource.addEventListener('content_block:delta', function (e) {
         try {
-          var payload = JSON.parse(e.data);
-          var delta = payload.delta || payload;
-          responseText += (delta.text || delta.thinking || '');
-        } catch (ex) { console.warn('SSE delta parse error:', ex); }
+          var raw = JSON.parse(e.data);
+          var text = extractDelta(raw);
+          if (text) {
+            responseText += text;
+            // Check if we can see findings forming
+            var partial = extractFindings(responseText);
+            if (partial.length > foundingsCount) {
+              foundingsCount = partial.length;
+              updateStatusText('Found ' + foundingsCount + ' finding' + (foundingsCount > 1 ? 's' : '') + ' so far\u2026');
+            }
+          }
+        } catch (ex) { console.warn('[feedback-analysis] delta parse error:', ex); }
+      });
+
+      // Show progress based on tool calls
+      evtSource.addEventListener('tool:pre', function (e) {
+        try {
+          var raw = JSON.parse(e.data);
+          var toolName = raw.tool_name || raw.name || (raw.data && raw.data.tool_name) || '';
+          var toolInput = raw.tool_input || raw.arguments || (raw.data && (raw.data.tool_input || raw.data.arguments)) || '';
+          if (typeof toolInput === 'object') toolInput = JSON.stringify(toolInput);
+
+          if (toolName === 'bash' && toolInput.indexOf('gh issue') !== -1) {
+            updateStatusText('Searching GitHub issues\u2026');
+          } else if (toolName === 'bash' && toolInput.indexOf('gh ') !== -1) {
+            updateStatusText('Querying GitHub\u2026');
+          } else if (toolName === 'read_file' || (toolName === 'bash' && toolInput.indexOf('transcript') !== -1)) {
+            updateStatusText('Reading session logs\u2026');
+          } else if (toolName === 'bash' && toolInput.indexOf('serve.log') !== -1) {
+            updateStatusText('Checking server logs\u2026');
+          } else if (toolName === 'grep') {
+            updateStatusText('Searching logs\u2026');
+          } else if (toolName) {
+            updateStatusText('Analyzing (' + toolName + ')\u2026');
+          }
+          console.log('[feedback-analysis] tool:pre', toolName);
+        } catch (ex) { /* ignore */ }
       });
 
       function onComplete() {
@@ -643,27 +706,40 @@
         console.log('[feedback-analysis] Complete. Response length:', responseText.length);
         findings = extractFindings(responseText);
         console.log('[feedback-analysis] Extracted', findings.length, 'findings');
-        renderFindings();
+        if (findings.length > 0) {
+          for (var i = 0; i < findings.length; i++) { findingChecked[i] = true; }
+          updateAnalysisUI('complete');
+        } else if (responseText.length > 0) {
+          // Got a response but no structured findings
+          updateAnalysisUI('idle');
+        } else {
+          updateAnalysisUI('idle');
+        }
       }
 
       evtSource.addEventListener('orchestrator:complete', onComplete);
       evtSource.addEventListener('execution:end', onComplete);
 
       evtSource.onerror = function (evt) {
-        console.error('[feedback-analysis] SSE error:', evt, 'readyState:', evtSource.readyState);
+        console.error('[feedback-analysis] SSE error, readyState:', evtSource.readyState);
         if (analysisComplete) return;
-        // Try to parse whatever we have accumulated
-        if (responseText) {
-          findings = extractFindings(responseText);
-          if (findings.length > 0) {
-            analysisComplete = true;
-            closeSSE();
-            renderFindings();
-            return;
+        // readyState 0 = CONNECTING (retry), 2 = CLOSED
+        if (evtSource.readyState === 2) {
+          // Connection closed — try to parse what we have
+          if (responseText) {
+            findings = extractFindings(responseText);
+            if (findings.length > 0) {
+              for (var i = 0; i < findings.length; i++) { findingChecked[i] = true; }
+              analysisComplete = true;
+              closeSSE();
+              updateAnalysisUI('complete');
+              return;
+            }
           }
+          updateAnalysisUI('error', 'Analysis connection closed.');
+          closeSSE();
         }
-        updateAnalysisUI('error', 'Connection to analysis stream lost.');
-        closeSSE();
+        // readyState 0 = still trying to reconnect, let it retry
       };
     }
 
