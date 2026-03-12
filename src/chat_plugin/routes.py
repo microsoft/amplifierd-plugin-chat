@@ -284,7 +284,23 @@ def create_static_routes() -> APIRouter:
     router = APIRouter(tags=["chat-static"])
 
     @router.get("/chat/")
-    async def serve_spa():
+    async def serve_spa(request: Request):
+        # Serve loading screen while bundles are warming up
+        bundles_ready = getattr(request.app.state, "bundles_ready", None)
+        if bundles_ready and not bundles_ready.is_set():
+            loading_path = STATIC_DIR / "loading.html"
+            try:
+                return Response(
+                    content=loading_path.read_text(),
+                    media_type="text/html",
+                )
+            except OSError:
+                return Response(
+                    content="<h1>Starting up&hellip;</h1><p>Preparing your environment.</p>",
+                    media_type="text/html",
+                    status_code=503,
+                    headers={"Retry-After": "5"},
+                )
         html = (STATIC_DIR / "index.html").read_text()
         return Response(content=html, media_type="text/html")
 

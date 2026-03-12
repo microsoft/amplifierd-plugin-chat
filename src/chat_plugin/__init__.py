@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import RedirectResponse
 
 
 def create_router(state: Any) -> APIRouter:
@@ -58,6 +59,13 @@ def create_router(state: Any) -> APIRouter:
 
     # Daemon session path for server-log analysis (may be None)
     daemon_session_path = os.environ.get("AMPLIFIERD_DAEMON_SESSION_PATH")
+
+    # When no distro plugin owns the root path, redirect / → /chat/
+    if distro_ns is None:
+
+        @router.get("/", include_in_schema=False)
+        async def root_redirect():
+            return RedirectResponse(url="/chat/")
 
     router.include_router(create_config_routes(distro_home))
     router.include_router(create_pin_routes(pin_storage))
