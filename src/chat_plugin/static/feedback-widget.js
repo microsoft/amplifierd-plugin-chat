@@ -462,7 +462,7 @@
         renderFindings();
       } else {
         // idle
-        analysisSection.textContent = '';
+        analysisSection.innerHTML = '';
       }
     }
 
@@ -535,6 +535,7 @@
     function cancelAnalysis() {
       closeSSE();
       if (analysisSessionId && !analysisComplete) {
+        // Cancel endpoint is at server root, not under apiBase (/chat/api)
         fetch('/sessions/' + encodeURIComponent(analysisSessionId) + '/cancel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
