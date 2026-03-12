@@ -41,6 +41,7 @@ def main() -> None:
 
     import uvicorn
     from fastapi import FastAPI
+    from fastapi.responses import RedirectResponse
 
     from chat_plugin import create_router
 
@@ -50,6 +51,10 @@ def main() -> None:
 
     app = FastAPI(title="amplifier-chat (dev)")
     app.include_router(create_router(state))
+
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        return RedirectResponse(url="/chat/")
 
     print(f"Chat plugin dev server → http://{args.host}:{args.port}/chat/")
     uvicorn.run(app, host=args.host, port=args.port)

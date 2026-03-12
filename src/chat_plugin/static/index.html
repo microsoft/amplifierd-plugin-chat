@@ -1613,14 +1613,24 @@
       return resp.json();
     },
     async resumeSession(sessionId) {
-      const resp = await fetch(`${API_BASE}/sessions/${sessionId}/resume`, {
-        method: 'POST',
-      });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new Error(`Resume failed: HTTP ${resp.status} — ${body}`);
+      const MAX_RETRIES = 5;
+      const RETRY_DELAY = 2000; // ms
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const resp = await fetch(`${API_BASE}/sessions/${sessionId}/resume`, {
+          method: 'POST',
+        });
+        // 503 = bundles still loading — retry with backoff
+        if (resp.status === 503 && attempt < MAX_RETRIES) {
+          console.warn(`[chat] resume 503, retrying in ${RETRY_DELAY}ms (${attempt + 1}/${MAX_RETRIES})`);
+          await new Promise(r => setTimeout(r, RETRY_DELAY));
+          continue;
+        }
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => '');
+          throw new Error(`Resume failed: HTTP ${resp.status} — ${body}`);
+        }
+        return resp.json();
       }
-      return resp.json();
     },
   };
 

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amplifier — Starting up</title>
+<!--
+  Try loading the shared theme from the distro plugin. If the distro plugin
+  is not mounted the requests silently fail and the inline fallbacks below
+  provide a reasonable default appearance.
+-->
+<script src="/static/theme-init.js" onerror=""></script>
+<link rel="stylesheet" href="/static/amplifier-theme.css" onerror="">
+<style>
+/* Fallback CSS-variable values for standalone mode (no distro theme). */
+:root {
+  --signal:       #6366f1;
+  --ink:          #1e1e1e;
+  --ink-slate:    #6b7280;
+  --canvas-stone: #f3f4f6;
+  --canvas-mist:  #e5e7eb;
+  --error:        #dc2626;
+  --error-soft:   #fef2f2;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --signal:       #818cf8;
+    --ink:          #e5e7eb;
+    --ink-slate:    #9ca3af;
+    --canvas-stone: #1f2937;
+    --canvas-mist:  #374151;
+    --error:        #f87171;
+    --error-soft:   rgba(248, 113, 113, 0.1);
+  }
+  body { background: #111827; }
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--canvas, #ffffff);
+  color: var(--ink);
+}
+
+.stage {
+  text-align: center;
+  padding: 40px 24px;
+  max-width: 420px;
+  width: 100%;
+}
+
+/* Wordmark */
+.wordmark {
+  font-size: clamp(2.5rem, 8vw, 3.5rem);
+  font-weight: 700;
+  color: var(--signal);
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin-bottom: 32px;
+  animation: wordmarkPulse 3s ease-in-out infinite;
+}
+
+@keyframes wordmarkPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+/* Dot spinner */
+.dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+  animation: dotBounce 1.4s ease-in-out infinite;
+}
+.dot:nth-child(2) { animation-delay: 0.16s; }
+.dot:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1;   }
+}
+
+/* Status text */
+.status-msg {
+  font-size: 14px;
+  color: var(--ink-slate);
+  line-height: 1.5;
+  min-height: 1.5em;
+}
+
+/* Slow-load message (hidden by default) */
+.slow-msg {
+  display: none;
+  margin-top: 28px;
+  padding: 16px 20px;
+  background: var(--canvas-stone);
+  border: 1px solid var(--canvas-mist);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--ink-slate);
+  line-height: 1.5;
+}
+
+.slow-msg a {
+  color: var(--signal);
+  text-decoration: none;
+  font-weight: 500;
+}
+.slow-msg a:hover { text-decoration: underline; }
+
+/* Error state (hidden by default) */
+.error-box {
+  display: none;
+  margin-top: 28px;
+  padding: 16px 20px;
+  background: var(--error-soft);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--error);
+  line-height: 1.5;
+}
+
+.error-msg { margin-bottom: 14px; }
+
+.retry-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--canvas-mist);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.retry-btn:hover { background: var(--canvas-stone); }
+
+@media (prefers-reduced-motion: reduce) {
+  .wordmark { animation: none; }
+  .dot      { animation: none; opacity: 1; transform: none; }
+}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="wordmark">amplifier</div>
+  <div class="dots" id="dots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+  <p class="status-msg" id="statusMsg">Preparing your environment&hellip;</p>
+
+  <div class="slow-msg" id="slowMsg">
+    Taking longer than expected&hellip;<br>
+    <a href="/chat/" id="continueLink">Continue anyway &rarr;</a>
+  </div>
+
+  <div class="error-box" id="errorBox">
+    <div class="error-msg" id="errorMsg"></div>
+    <button class="retry-btn" id="retryBtn">Retry</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var POLL_INTERVAL = 2000;    // ms between polls
+  var REQUEST_TIMEOUT = 3000;  // AbortController timeout per request
+  var SLOW_TIMEOUT = 60000;    // show "taking longer" after 60 s
+
+  var pollTimer = null;
+  var slowTimer = null;
+  var stopped = false;
+
+  var statusMsg = document.getElementById('statusMsg');
+  var dots      = document.getElementById('dots');
+  var slowMsg   = document.getElementById('slowMsg');
+  var errorBox  = document.getElementById('errorBox');
+  var errorMsg  = document.getElementById('errorMsg');
+  var retryBtn  = document.getElementById('retryBtn');
+
+  function showLoading() {
+    dots.style.display = 'flex';
+    statusMsg.textContent = 'Preparing your environment\u2026';
+    errorBox.style.display = 'none';
+  }
+
+  function showError(msg) {
+    dots.style.display = 'none';
+    statusMsg.textContent = '';
+    errorMsg.textContent = msg || 'Something went wrong. Please retry.';
+    errorBox.style.display = 'block';
+  }
+
+  function redirect(url) {
+    stopped = true;
+    clearTimeout(pollTimer);
+    clearTimeout(slowTimer);
+    window.location.replace(url);
+  }
+
+  async function checkReady() {
+    if (stopped) return;
+
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, REQUEST_TIMEOUT);
+
+    var data;
+    try {
+      var res = await fetch('/ready', { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      data = await res.json();
+    } catch (e) {
+      clearTimeout(t);
+      // Network error or timeout — keep polling silently
+      // (server event loop may be blocked during prewarm)
+      scheduleNext();
+      return;
+    }
+
+    if (data.ready === true) {
+      redirect('/chat/');
+    } else if (data.ready === false && data.error) {
+      showError(data.error);
+      // Stop polling — user must click Retry
+    } else {
+      // {ready: false} with no error — normal loading, keep polling
+      scheduleNext();
+    }
+  }
+
+  function scheduleNext() {
+    if (stopped) return;
+    pollTimer = setTimeout(checkReady, POLL_INTERVAL);
+  }
+
+  function startPolling() {
+    showLoading();
+    clearTimeout(pollTimer);
+    clearTimeout(slowTimer);
+
+    slowTimer = setTimeout(function () {
+      if (!stopped) slowMsg.style.display = 'block';
+    }, SLOW_TIMEOUT);
+
+    checkReady();
+  }
+
+  retryBtn.addEventListener('click', function () {
+    fetch('/ready/retry', { method: 'POST' }).catch(function () {});
+    startPolling();
+  });
+
+  startPolling();
+}());
+</script>
+</body>
+</html>
