@@ -3142,6 +3142,20 @@
     onScrollTurnChange,
     onItemClick,
   }) {
+    // Hover debounce: 50ms intent delay to prevent strobe during fast scanning
+    const hoverTimerRef = useRef(null);
+    const debouncedSetHoveredTurnId = useCallback((turnId) => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      if (turnId === null) {
+        // Clear immediately on mouse leave
+        setHoveredTurnId && setHoveredTurnId(null);
+        return;
+      }
+      hoverTimerRef.current = setTimeout(() => {
+        setHoveredTurnId && setHoveredTurnId(turnId);
+      }, 50);
+    }, [setHoveredTurnId]);
+
     const filtered = filterFn ? items.filter(filterFn) : items;
     const sorted = [...filtered].sort((a, b) => a.order - b.order);
     const listRef = useRef(null);
@@ -3294,8 +3308,8 @@
               />`}
               <div class=${itemCls || undefined}
                 data-turn-id=${turnId || undefined}
-                onMouseEnter=${() => setHoveredTurnId && turnId && setHoveredTurnId(turnId)}
-                onMouseLeave=${() => setHoveredTurnId && setHoveredTurnId(null)}
+                onMouseEnter=${() => turnId && debouncedSetHoveredTurnId(turnId)}
+                onMouseLeave=${() => debouncedSetHoveredTurnId(null)}
                 onClick=${() => !isActivityPanel && onItemClick && turnId && onItemClick(turnId)}
                 style=${!isActivityPanel && turnId ? 'cursor: pointer;' : undefined}>
                 <${ChronoItem} key=${item.id} item=${item}
