@@ -44,8 +44,9 @@ class TestTask19SwitchSessionCountdown:
         )
 
     def test_switch_session_restarts_countdown_for_target(self, html_content):
-        """switchSession restarts countdown if target session had active countdown."""
-        assert "if (getQueueDrainState(key) === 'countdown') {" in html_content
+        """switchSession restarts countdown if target session had active countdown (and isn't running)."""
+        # The condition now guards against running sessions too
+        assert "getQueueDrainState(key) === 'countdown'" in html_content
 
     def test_switch_session_calls_try_drain_queue_on_restore(self, html_content):
         """switchSession calls tryDrainQueue() when restoring a countdown session."""

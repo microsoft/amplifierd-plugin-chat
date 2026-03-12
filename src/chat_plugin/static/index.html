@@ -3624,6 +3624,7 @@
     // Current session state
     const [chronoItems, setChronoItems] = useState([]);
     const [executing, setExecuting] = useState(false);
+    const executingRef = useRef(false);
     const [pendingApproval, setPendingApproval] = useState(null);
     const [sessionId, setSessionId] = useState(null);
     const sessionIdRef = useRef(null);
@@ -3799,14 +3800,16 @@
     function tryDrainQueue() {
       const key = activeKeyRef.current;
       if (!key) return;
+      if (executingRef.current) return;
       const queue = getQueue(key);
       const drainState = getQueueDrainState(key);
-      if (queue.length === 0 || drainState === 'paused') {
+      if (queue.length === 0 || drainState === 'paused' || drainState === 'countdown') {
         if (drainState !== 'paused') setQueueDrainStateFn('idle', key);
         return;
       }
       setQueueDrainStateFn('countdown', key);
       startCountdown(() => {
+        if (executingRef.current) { setQueueDrainStateFn('idle', key); return; }
         // Pop the first item and send it
         const q = getQueue(key);
         if (q.length === 0) {
@@ -3844,6 +3847,8 @@
     useEffect(() => {
       turnCountRef.current = turnCount;
     }, [turnCount]);
+
+    useEffect(() => { executingRef.current = executing; }, [executing]);
 
     useEffect(() => {
       defaultCwdRef.current = defaultCwd;
@@ -5893,7 +5898,7 @@
       setTurnCount(target.savedTurnCount || 0);
       setExecuting(target.status === 'running');
       // If the target session had an active countdown, restart it
-      if (getQueueDrainState(key) === 'countdown') {
+      if (target.status !== 'running' && getQueueDrainState(key) === 'countdown') {
         tryDrainQueue();
       }
       setPendingApproval(null);
