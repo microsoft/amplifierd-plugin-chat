@@ -3553,6 +3553,18 @@
     const diskRefreshInFlightRef = useRef(new Set());
     const autoDiskRefreshAtRef = useRef({});
 
+    // — Message queue —
+    // Map<sessionKey, Array<{ id: string, content: string, images: string[], queuedAt: number }>>
+    const msgQueueRef = useRef(new Map());
+    // Re-render trigger — bump this counter whenever the queue changes
+    const [queueVersion, setQueueVersion] = useState(0);
+    // Map<sessionKey, 'idle' | 'countdown' | 'paused'>
+    const queueDrainStateRef = useRef(new Map());
+    // Active setTimeout ID for the countdown
+    const countdownTimerRef = useRef(null);
+    // Seconds remaining in the active countdown (drives UI); null when inactive
+    const [countdownRemaining, setCountdownRemaining] = useState(null);
+
     // — Sub-session rendering —
     const subSessionsRef = useRef(new Map());
     const subBlockMapRef = useRef(new Map());
@@ -3565,6 +3577,48 @@
       subBlockMapRef.current = new Map();
       subNextIndexRef.current = new Map();
       if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
+    }
+
+    // — Message queue helpers —
+    function getQueue(key) {
+      return msgQueueRef.current.get(key || activeKeyRef.current) || [];
+    }
+
+    function pushToQueue(content, images) {
+      const key = activeKeyRef.current;
+      if (!key) return;
+      const queue = msgQueueRef.current.get(key) || [];
+      queue.push({ id: makeId(), content, images: images || [], queuedAt: Date.now() });
+      msgQueueRef.current.set(key, queue);
+      setQueueVersion(v => v + 1);
+    }
+
+    function removeFromQueue(msgId) {
+      const key = activeKeyRef.current;
+      if (!key) return;
+      const queue = (msgQueueRef.current.get(key) || []).filter(m => m.id !== msgId);
+      if (queue.length === 0) {
+        msgQueueRef.current.delete(key);
+      } else {
+        msgQueueRef.current.set(key, queue);
+      }
+      setQueueVersion(v => v + 1);
+    }
+
+    function clearSessionQueue(key) {
+      msgQueueRef.current.delete(key || activeKeyRef.current);
+      queueDrainStateRef.current.delete(key || activeKeyRef.current);
+      setQueueVersion(v => v + 1);
+    }
+
+    function getQueueDrainState(key) {
+      return queueDrainStateRef.current.get(key || activeKeyRef.current) || 'idle';
+    }
+
+    function setQueueDrainStateFn(state, key) {
+      queueDrainStateRef.current.set(key || activeKeyRef.current, state);
+      // Force re-render so QueuePanel picks up the new state
+      setQueueVersion(v => v + 1);
     }
 
     useEffect(() => {
