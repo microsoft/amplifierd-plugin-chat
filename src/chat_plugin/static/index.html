@@ -1794,6 +1794,7 @@
       case 'delegate:agent_spawned':
         // Gap 1: Delegate module emits sub_session_id; frontend expects child_id.
         if (p.child_id == null && p.sub_session_id != null) p.child_id = p.sub_session_id;
+        if (p.parent_tool_call_id == null && p.tool_call_id != null) p.parent_tool_call_id = p.tool_call_id;
         break;
       case 'tool:pre':
         if (p.arguments == null && p.tool_input != null) {
