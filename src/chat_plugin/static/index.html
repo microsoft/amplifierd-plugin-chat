@@ -16,7 +16,7 @@
       --border: rgba(255,255,255,0.08);
       --text-primary: #e8e8e8;
       --text-secondary: #999;
-      --text-muted: #555;
+      --text-muted: #6b6b6b;
       --accent-blue: #3b82f6;
       --accent-green: #22c55e;
       --accent-amber: #f59e0b;
@@ -39,11 +39,11 @@
       --sub-text: #aaa;
       --sub-text-muted: #666;
 
-      /* Turn correlation */
-      --turn-highlight: rgba(59, 130, 246, 0.06);
-      --turn-highlight-border: rgba(59, 130, 246, 0.3);
-      --turn-pulse-peak: rgba(59, 130, 246, 0.12);
-      --turn-selected-accent: rgba(59, 130, 246, 0.5);
+      /* Turn correlation — neutral backgrounds, desaturated accents */
+      --turn-highlight: rgba(255, 255, 255, 0.035);
+      --turn-highlight-border: rgba(255, 255, 255, 0.10);
+      --turn-pulse-peak: rgba(255, 255, 255, 0.055);
+      --turn-selected-accent: rgba(148, 163, 184, 0.45);
     }
 
     body[data-theme="light"] {
@@ -73,10 +73,10 @@
       --sub-text: #4a5568;
       --sub-text-muted: #718096;
 
-      --turn-highlight: rgba(37, 99, 235, 0.07);
-      --turn-highlight-border: rgba(37, 99, 235, 0.25);
-      --turn-pulse-peak: rgba(37, 99, 235, 0.1);
-      --turn-selected-accent: rgba(37, 99, 235, 0.45);
+      --turn-highlight: rgba(0, 0, 0, 0.03);
+      --turn-highlight-border: rgba(0, 0, 0, 0.10);
+      --turn-pulse-peak: rgba(0, 0, 0, 0.045);
+      --turn-selected-accent: rgba(71, 85, 105, 0.4);
     }
 
     body {
@@ -661,15 +661,15 @@
       background: var(--bg-secondary);
     }
     .activity-panel-header {
-      padding: 8px 12px;
+      padding: 8px 14px;
       font-size: 11px;
-      color: var(--text-muted);
+      color: var(--text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .activity-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 8px; }
+    .activity-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 10px 12px; }
 
     /* Turn separators in activity panel */
     .turn-separator {
@@ -722,7 +722,7 @@
       color: var(--text-primary);
     }
     .turn-separator:hover .turn-separator-number {
-      color: var(--accent-blue);
+      color: var(--text-secondary);
     }
 
     /* Sticky turn breadcrumb in activity panel */
@@ -770,7 +770,7 @@
       opacity: 1;
     }
     .activity-breadcrumb-nav:hover {
-      color: var(--accent-blue);
+      color: var(--text-primary);
       background: var(--bg-tertiary);
     }
     body[data-theme="light"] .activity-breadcrumb {
@@ -813,7 +813,7 @@
       background: var(--turn-selected-accent);
     }
     .turn-dimmed {
-      opacity: 0.4;
+      opacity: 0.55;
       transition: opacity 150ms ease-out;
     }
 
@@ -823,16 +823,16 @@
       background: var(--turn-highlight-border);
     }
     .turn-separator.turn-highlighted .turn-separator-number {
-      color: var(--accent-blue);
+      color: var(--text-secondary);
     }
 
     /* Separator highlight for selected */
     .turn-separator.turn-selected::before,
     .turn-separator.turn-selected::after {
-      background: var(--accent-blue);
+      background: var(--turn-selected-accent);
     }
     .turn-separator.turn-selected .turn-separator-number {
-      color: var(--accent-blue);
+      color: var(--text-primary);
     }
     .turn-separator.turn-selected .turn-separator-message {
       color: var(--text-primary);
@@ -840,10 +840,10 @@
 
     /* Selected message in main panel gets a visible left accent */
     .turn-selected-message {
-      border-left: 3px solid var(--accent-blue);
-      padding-left: 8px;
+      border-left: 3px solid var(--turn-selected-accent);
+      padding: 6px 6px 6px 13px;
       background: var(--turn-pulse-peak);
-      border-radius: 4px;
+      border-radius: 6px;
       transition: background 150ms ease-out, border-color 150ms ease-out;
     }
 
@@ -852,12 +852,12 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 10px;
+      padding: 5px 10px;
       margin: 2px 0;
       font-size: 11px;
       font-style: italic;
       color: var(--text-secondary);
-      opacity: 0.6;
+      opacity: 0.85;
       border-top: 1px dashed var(--border);
       border-bottom: 1px dashed var(--border);
       cursor: pointer;
@@ -865,10 +865,10 @@
       overflow: hidden;
       text-overflow: ellipsis;
       min-height: 28px;
-      transition: opacity 120ms ease;
+      transition: opacity 120ms ease, color 120ms ease;
     }
     .activity-waypoint:hover {
-      opacity: 0.9;
+      opacity: 1;
       color: var(--text-primary);
       background: var(--turn-highlight);
     }
@@ -884,14 +884,15 @@
     }
     .activity-waypoint.segment-active {
       opacity: 1;
-      color: var(--accent-blue);
+      color: var(--text-primary);
+      font-style: normal;
       border-color: var(--turn-selected-accent);
-      background: var(--turn-highlight);
+      background: var(--turn-pulse-peak);
     }
 
     /* Segment siblings — same turn, different segment */
     .segment-sibling {
-      opacity: 0.6;
+      opacity: 0.7;
       transition: opacity 150ms ease-out;
     }
 
@@ -903,14 +904,14 @@
       font-size: 10px;
       line-height: 1;
       color: var(--text-muted);
-      padding: 3px 0 0;
-      opacity: 0.45;
+      padding: 4px 0 1px;
+      opacity: 0.7;
       transition: opacity 120ms ease;
       cursor: pointer;
       user-select: none;
     }
     .activity-indicator:hover {
-      opacity: 0.8;
+      opacity: 1;
     }
     .activity-indicator.align-right {
       justify-content: flex-end;
@@ -919,11 +920,11 @@
       color: rgba(139, 92, 246, 0.75);
     }
     .activity-ind-sep {
-      opacity: 0.35;
+      opacity: 0.5;
     }
     /* Boost indicator visibility when parent message is selected */
     .turn-selected-message .activity-indicator {
-      opacity: 0.7;
+      opacity: 1;
     }
 
     /* Reduced motion */
@@ -1024,7 +1025,7 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 10px 14px;
+      padding: 12px 16px;
       line-height: 1.6;
       white-space: pre-wrap;
       word-break: break-word;
@@ -1318,7 +1319,7 @@
       background: var(--sub-bg-elevated);
       border: 1px solid var(--sub-border);
       color: var(--sub-text);
-      padding: 10px 14px;
+      padding: 12px 16px;
       border-radius: 6px;
       font-size: 13px;
     }
@@ -3561,11 +3562,11 @@
                 itemCls = 'turn-dimmed';
               }
             } else if (hoveredTurnId) {
-              // Hover preview
+              // Hover preview — additive only, no dimming
+              // Dimming on hover is too disruptive when casually scanning messages.
+              // Only highlight the hovered turn; leave everything else at full opacity.
               if (turnId === hoveredTurnId) {
                 itemCls = 'turn-highlighted';
-              } else if (turnId) {
-                itemCls = 'turn-dimmed';
               }
             }
 
