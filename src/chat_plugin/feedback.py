@@ -110,6 +110,14 @@ For each distinct error pattern found above, search for related issues:
 
 If no errors were found in Tasks 1-2, skip this task.
 
+For each GitHub issue found, assess confidence using these definitions:
+- "high": The session error's message, type, or stack trace directly matches what
+  the issue describes. Same failure mode, same component.
+- "medium": The issue is in the same component/module area and describes a related
+  (but not identical) failure pattern. Plausibly the same root cause.
+- "low": Only superficial keyword overlap. The issue mentions similar terms but
+  describes a different problem or context.
+
 OUTPUT FORMAT
 Return a single flat JSON array. Output ONLY valid JSON — no markdown fences,
 no commentary, no explanation before or after. Just the array.
@@ -117,7 +125,7 @@ no commentary, no explanation before or after. Just the array.
 Each item MUST have a "source" field: "github", "session", or "server_log".
 
 Item schemas:
-- GitHub: {{"source":"github","summary":"#N - title","url":"https://...","status":"open|closed","relevance":"why this matches"}}
+- GitHub: {{"source":"github","summary":"#N - title","url":"https://...","state":"open|closed","confidence":"high|medium|low","relevance":"why this matches"}}
 - Session: {{"source":"session","summary":"one-line","timestamp":"ISO","turn":N,"event_type":"tool:error|provider:error","event_data":{{original event data from transcript}},"error":{{"type":"ErrorType","message":"...","traceback":["frame1","frame2"]}}}}
 - Server log: {{"source":"server_log","summary":"one-line","timestamp":"ISO","log_level":"ERROR","log_line":"full line","context_lines":["surrounding lines"]}}
 

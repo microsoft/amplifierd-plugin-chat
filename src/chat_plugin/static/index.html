@@ -1567,7 +1567,7 @@
       font-size: 14px;
       resize: none;
       line-height: 1.4;
-      min-height: 38px;
+      min-height: 44px;
       max-height: 200px;
       overflow-y: auto;
       outline: none;
@@ -1577,7 +1577,7 @@
     #message-input::placeholder { color: var(--text-muted); }
 
     .input-btn {
-      height: 38px;
+      min-height: 44px;
       padding: 0 14px;
       border: none;
       border-radius: 6px;
@@ -1859,6 +1859,124 @@
         animation-delay: 0ms !important;
       }
     }
+    /* — Message Queue Panel — */
+    .queue-panel {
+      max-height: 30vh;
+      overflow-y: auto;
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-secondary, var(--bg));
+    }
+    @media (max-width: 768px) {
+      .queue-panel { max-height: 25vh; }
+    }
+    .queue-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--text-secondary, #888);
+    }
+    .queue-panel-header span {
+      font-weight: 600;
+    }
+    .queue-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      margin-bottom: 4px;
+      border-radius: 6px;
+      background: var(--bg-tertiary, var(--bg));
+      font-size: 13px;
+      color: var(--text-primary, var(--text, #ccc));
+      border-left: 3px solid transparent;
+    }
+    .queue-item--countdown {
+      border-left: 3px solid var(--accent-blue, #3b82f6);
+      animation: queue-glow 2s ease-in-out infinite;
+    }
+    @keyframes queue-glow {
+      0%, 100% { background-color: transparent; }
+      50% { background-color: rgba(59, 130, 246, 0.06); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .queue-item--countdown {
+        animation: none;
+        background-color: rgba(59, 130, 246, 0.06);
+      }
+    }
+    .queue-item--paused {
+      opacity: 0.7;
+      border-left-color: var(--text-muted, #555);
+    }
+    .queue-item-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .queue-item-image {
+      font-size: 11px;
+      color: var(--text-secondary, #888);
+      margin-left: 4px;
+    }
+    .queue-item-countdown-label {
+      font-size: 11px;
+      color: var(--accent-blue, #3b82f6);
+      white-space: nowrap;
+      margin-left: auto;
+    }
+    .queue-item-remove {
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      color: var(--text-secondary, #888);
+      cursor: pointer;
+      font-size: 16px;
+      flex-shrink: 0;
+      border-radius: 4px;
+      /* 44px min tap target for accessibility */
+    }
+    .queue-item-remove:hover {
+      color: var(--text-primary, var(--text, #ccc));
+      background: var(--bg-hover, rgba(128,128,128,0.1));
+    }
+    .queue-item-remove:focus-visible,
+    .queue-panel-btn:focus-visible {
+      outline: 2px solid var(--accent-blue, #3b82f6);
+      outline-offset: 2px;
+    }
+    .queue-panel-btn {
+      min-height: 44px;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      margin-top: 4px;
+      border: 1px solid var(--accent-blue, #3b82f6);
+      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.08);
+      color: var(--accent-blue, #3b82f6);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      /* 44px min tap target for accessibility */
+    }
+    .queue-panel-btn:hover {
+      background: rgba(59, 130, 246, 0.15);
+    }
+    .session-stale-badge.queue-badge {
+      border-color: rgba(59, 130, 246, 0.35);
+      color: var(--accent-blue, #3b82f6);
+    }
   </style>
 </head>
 <body>
@@ -1890,11 +2008,13 @@
       const resp = await fetch(`${API_BASE}/sessions/${sessionId}`);
       return resp.json();
     },
-    async executeStream(sessionId, prompt) {
+    async executeStream(sessionId, prompt, images) {
+      const body = { prompt };
+      if (images && images.length > 0) body.images = images;
       const resp = await fetch(`${API_BASE}/sessions/${sessionId}/execute/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify(body),
       });
       return resp.json();
     },
@@ -2028,6 +2148,7 @@
       case 'delegate:agent_spawned':
         // Gap 1: Delegate module emits sub_session_id; frontend expects child_id.
         if (p.child_id == null && p.sub_session_id != null) p.child_id = p.sub_session_id;
+        if (p.parent_tool_call_id == null && p.tool_call_id != null) p.parent_tool_call_id = p.tool_call_id;
         break;
       case 'tool:pre':
         if (p.arguments == null && p.tool_input != null) {
@@ -3762,7 +3883,7 @@
     `;
   }
 
-  function SessionCard({ session, isActive, onClick, setSessions, onTogglePin, isPinned }) {
+  function SessionCard({ session, isActive, onClick, setSessions, onTogglePin, isPinned, queueCount }) {
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState('');
     const [shaking, setShaking] = useState(false);
@@ -3938,6 +4059,9 @@
           ${session.hasExternalUpdate
             ? html`<span class="session-stale-badge ${session.isNewSession ? 'new-session' : ''}">${session.isNewSession ? 'New' : 'Updated'}</span>`
             : null}
+          ${queueCount > 0
+            ? html`<span class="session-stale-badge queue-badge">${queueCount} queued</span>`
+            : null}
         </div>
         ${preview ? html`<div class="session-card-cwd" title=${session.lastUserMessage || ''}>${preview}</div>` : null}
         <div aria-live="polite" class="sr-only">${announcement}</div>
@@ -3945,7 +4069,44 @@
     `;
   }
 
-  function InputArea({ onSend, onStop, executing, viewMode, setViewMode, activeKey }) {
+  function QueuePanel({ queue, drainState, countdownSecs, onRemove, onResume }) {
+    if (!queue || queue.length === 0) return null;
+    const isPaused = drainState === 'paused';
+    const isCountdown = drainState === 'countdown';
+
+    return html`
+      <div class="queue-panel" role="region" aria-label="Message queue">
+        <div class="queue-panel-header">
+          <span aria-live="polite" aria-atomic="true">Queued messages (${queue.length})</span>
+        </div>
+        <div role="list">
+        ${queue.map((msg, idx) => {
+          const isFirst = idx === 0;
+          const showCountdown = isFirst && isCountdown && countdownSecs !== null;
+          let cls = 'queue-item';
+          if (showCountdown) cls += ' queue-item--countdown';
+          if (isPaused) cls += ' queue-item--paused';
+          return html`
+            <div class=${cls} key=${msg.id} role="listitem">
+              <span class="queue-item-text">
+                ${msg.content || ''}${msg.images && msg.images.length > 0 && html`<span class="queue-item-image"> [image]</span>`}
+              </span>
+              ${showCountdown && html`<span class="queue-item-countdown-label">Sending in ${countdownSecs}s…</span>`}
+              <button class="queue-item-remove" onClick=${() => onRemove(msg.id)} aria-label="Remove queued message: ${(msg.content || '').slice(0, 40)}" title="Remove">×</button>
+            </div>
+          `;
+        })}
+        </div>
+        ${isPaused && html`
+          <button class="queue-panel-btn" onClick=${onResume}>
+            Resume queue (${queue.length} remaining)
+          </button>
+        `}
+      </div>
+    `;
+  }
+
+  function InputArea({ onSend, onStop, onQueueMessage, executing, shouldQueue, viewMode, setViewMode, activeKey }) {
     const textareaRef = useRef(null);
     const fileInputRef = useRef(null);
     const [pendingImages, setPendingImages] = useState([]);
@@ -3955,7 +4116,7 @@
 
     useEffect(() => {
       const ta = textareaRef.current;
-      if (!ta || ta.disabled) return;
+      if (!ta) return;
       const rafId = window.requestAnimationFrame(() => {
         try {
           ta.focus();
@@ -3994,20 +4155,31 @@
     }, [addImages]);
 
     const doSend = useCallback(() => {
-      if (executing) return;  // Guard against double-send
       const ta = textareaRef.current;
       if (!ta) return;
       const content = ta.value.trim();
       if (!content && pendingImages.length === 0) return;
 
-      // Strip data URL prefix from images
+      // Slash commands always bypass the queue and send directly
+      if (shouldQueue && !content.startsWith('/')) {
+        if (content || pendingImages.length > 0) {
+          onQueueMessage(content, pendingImages.map(d => d.split(',')[1]));
+          ta.value = '';
+          ta.style.height = 'auto';
+          setPendingImages([]);
+          setSlashOpen(false);
+        }
+        return;
+      }
+
+      // Normal send path
       const images = pendingImages.map(d => d.split(',')[1]);
       onSend(content, images);
       ta.value = '';
       ta.style.height = 'auto';
       setPendingImages([]);
       setSlashOpen(false);
-    }, [onSend, pendingImages, executing]);
+    }, [onSend, onQueueMessage, pendingImages, shouldQueue]);
 
     const applySlashCommand = useCallback((cmdName) => {
       const ta = textareaRef.current;
@@ -4121,10 +4293,9 @@
           <textarea
             id="message-input"
             ref=${textareaRef}
-            placeholder=${executing ? "Processing…" : "Message… (/ for commands)"}
+            placeholder=${shouldQueue ? "Queue a message…" : "Message… (/ for commands)"}
             rows="1"
-            disabled=${executing}
-            style=${{ opacity: executing ? 0.6 : 1 }}
+            style=${{ opacity: 1 }}
             aria-label="Message input"
             aria-autocomplete="list"
             aria-expanded=${slashMenuOpen ? 'true' : 'false'}
@@ -4140,10 +4311,10 @@
             <${Icon} name="paperclip" />
           </button>
           <input ref=${fileInputRef} type="file" accept="image/*" multiple style="display:none" onChange=${e => addImages(e.target.files)} />
-          ${executing
-            ? html`<button class="input-btn stop-btn" onClick=${onStop}>■ Stop</button>`
-            : html`<button class="input-btn send-btn" onClick=${doSend}>Send</button>`
-          }
+          <button class="input-btn send-btn" onClick=${doSend}>
+            ${shouldQueue ? 'Queue' : 'Send'}
+          </button>
+          ${executing && html`<button class="input-btn stop-btn" onClick=${onStop}>■ Stop</button>`}
         </div>
       </div>
     `;
@@ -4163,6 +4334,8 @@
     // Current session state
     const [chronoItems, setChronoItems] = useState([]);
     const [executing, setExecuting] = useState(false);
+    const executingRef = useRef(false);
+    const activeDelegatesRef = useRef(0);
     const [pendingApproval, setPendingApproval] = useState(null);
     const [sessionId, setSessionId] = useState(null);
     const sessionIdRef = useRef(null);
@@ -4242,6 +4415,18 @@
     const diskRefreshInFlightRef = useRef(new Set());
     const autoDiskRefreshAtRef = useRef({});
 
+    // — Message queue —
+    // Map<sessionKey, Array<{ id: string, content: string, images: string[], queuedAt: number }>>
+    const msgQueueRef = useRef(new Map());
+    // Re-render trigger — bump this counter whenever the queue changes
+    const [queueVersion, setQueueVersion] = useState(0);
+    // Map<sessionKey, 'idle' | 'countdown' | 'paused'>
+    const queueDrainStateRef = useRef(new Map());
+    // Active setTimeout ID for the countdown
+    const countdownTimerRef = useRef(null);
+    // Seconds remaining in the active countdown (drives UI); null when inactive
+    const [countdownRemaining, setCountdownRemaining] = useState(null);
+
     // — Sub-session rendering —
     const subSessionsRef = useRef(new Map());
     const subBlockMapRef = useRef(new Map());
@@ -4254,6 +4439,137 @@
       subBlockMapRef.current = new Map();
       subNextIndexRef.current = new Map();
       if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
+    }
+
+    // — Message queue helpers —
+    function getQueue(key) {
+      return msgQueueRef.current.get(key || activeKeyRef.current) || [];
+    }
+
+    function pushToQueue(content, images) {
+      const key = activeKeyRef.current;
+      if (!key) return;
+      const queue = msgQueueRef.current.get(key) || [];
+      queue.push({ id: makeId(), content, images: images || [], queuedAt: Date.now() });
+      msgQueueRef.current.set(key, queue);
+      setQueueVersion(v => v + 1);
+    }
+
+    function removeFromQueue(msgId, sessionKey) {
+      const key = sessionKey || activeKeyRef.current;
+      if (!key) return;
+      const queue = (msgQueueRef.current.get(key) || []).filter(m => m.id !== msgId);
+      if (queue.length === 0) {
+        msgQueueRef.current.delete(key);
+      } else {
+        msgQueueRef.current.set(key, queue);
+      }
+      setQueueVersion(v => v + 1);
+    }
+
+    function prependToQueue(msg, sessionKey) {
+      const key = sessionKey || activeKeyRef.current;
+      if (!key) return;
+      const queue = msgQueueRef.current.get(key) || [];
+      queue.unshift(msg);
+      msgQueueRef.current.set(key, queue);
+      setQueueVersion(v => v + 1);
+    }
+
+    function clearSessionQueue(key) {
+      msgQueueRef.current.delete(key || activeKeyRef.current);
+      queueDrainStateRef.current.delete(key || activeKeyRef.current);
+      setQueueVersion(v => v + 1);
+    }
+
+    function getQueueDrainState(key) {
+      return queueDrainStateRef.current.get(key || activeKeyRef.current) || 'idle';
+    }
+
+    function setQueueDrainStateFn(state, key) {
+      queueDrainStateRef.current.set(key || activeKeyRef.current, state);
+      // Force re-render so QueuePanel picks up the new state
+      setQueueVersion(v => v + 1);
+    }
+
+    function cancelCountdown(sessionKey) {
+      const hadActiveTimer = !!countdownTimerRef.current;
+      if (countdownTimerRef.current) {
+        clearTimeout(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+      setCountdownRemaining(null);
+      // Only reset drain state when actually cancelling an active countdown
+      // (not when startCountdown calls us to clear before starting a new one)
+      if (hadActiveTimer) {
+        const key = sessionKey || activeKeyRef.current;
+        if (key && getQueueDrainState(key) === 'countdown') {
+          setQueueDrainStateFn('idle', key);
+        }
+      }
+    }
+
+    function startCountdown(callback) {
+      cancelCountdown(); // clear any existing countdown
+      let remaining = 5;
+      setCountdownRemaining(remaining);
+      const tick = () => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          countdownTimerRef.current = null;
+          setCountdownRemaining(null);
+          callback();
+        } else {
+          setCountdownRemaining(remaining);
+          countdownTimerRef.current = setTimeout(tick, 1000);
+        }
+      };
+      countdownTimerRef.current = setTimeout(tick, 1000);
+    }
+
+    function tryDrainQueue() {
+      const key = activeKeyRef.current;
+      if (!key) return;
+      if (executingRef.current) return;
+      const queue = getQueue(key);
+      const drainState = getQueueDrainState(key);
+      if (queue.length === 0 || drainState === 'paused' || drainState === 'countdown') {
+        if (drainState !== 'paused') setQueueDrainStateFn('idle', key);
+        return;
+      }
+      setQueueDrainStateFn('countdown', key);
+      startCountdown(() => {
+        // Guard: session switched away or execution started while counting down
+        if (executingRef.current || activeKeyRef.current !== key) {
+          setQueueDrainStateFn('idle', key);
+          return;
+        }
+        // Pop the first item and send it
+        const q = getQueue(key);
+        if (q.length === 0) {
+          setQueueDrainStateFn('idle', key);
+          return;
+        }
+        const nextMsg = q[0];
+        removeFromQueue(nextMsg.id, key);
+        setQueueDrainStateFn('idle', key);
+        // sendMessage may fail — if so, re-push the item to front of queue
+        try {
+          sendMessage(nextMsg.content, nextMsg.images || []);
+        } catch (err) {
+          console.error('[queue] sendMessage failed for queued item, re-queuing', err);
+          prependToQueue(nextMsg, key);
+        }
+      });
+    }
+
+    function resumeQueue() {
+      const key = activeKeyRef.current;
+      if (!key) return;
+      const drainState = getQueueDrainState(key);
+      if (drainState !== 'paused') return;
+      setQueueDrainStateFn('idle', key);
+      tryDrainQueue();
     }
 
     useEffect(() => {
@@ -4271,6 +4587,8 @@
     useEffect(() => {
       turnCountRef.current = turnCount;
     }, [turnCount]);
+
+    useEffect(() => { executingRef.current = executing; }, [executing]);
 
     useEffect(() => {
       defaultCwdRef.current = defaultCwd;
@@ -5054,6 +5372,7 @@
           // Check if this result completes a sub-session (parent delegate/task finishing)
           if (subSessionsRef.current.has(msg.tool_call_id)) {
             endSubSession(msg.tool_call_id, msg.success ? 'complete' : 'error');
+            if (activeDelegatesRef.current > 0) activeDelegatesRef.current -= 1;
             // Still update the tool call item status in main chronoItems
             const itemId = toolMapRef.current[msg.tool_call_id];
             cycleRef.current++;
@@ -5111,6 +5430,8 @@
 
           if (!parentToolCallId || !parentItemId) break;
 
+          // Only count delegates we can actually track (after sub-session confirmed)
+          activeDelegatesRef.current += 1;
           if (childId) childToToolRef.current[childId] = parentToolCallId;
 
           createSubSession(parentToolCallId, childId, msg.agent);
@@ -5164,7 +5485,11 @@
               });
               return next;
             });
-            setExecuting(false);
+            if (activeDelegatesRef.current <= 0 && ownerKey === activeKeyRef.current) {
+              setExecuting(false);
+              executingRef.current = false;
+              tryDrainQueue();
+            }
             setTurnCount(nextTurn ?? (turnCountRef.current + 1));
           }
           // Flush accumulated token usage as a chrono item
@@ -5181,6 +5506,12 @@
           blockMapRef.current = {};
           cycleRef.current = 0;
           localIndexRef.current = 0;
+          // Clean up any blocks stuck in streaming state (e.g. empty text blocks
+          // from thinking-only LLM responses where content_start fired but no content arrived)
+          setChronoItems(prev => {
+            const hasStuck = prev.some(item => item.streaming);
+            return hasStuck ? prev.map(item => item.streaming ? { ...item, streaming: false } : item) : prev;
+          });
           // E2: cancel any in-flight synthetic animations
           for (const rafId of syntheticAnimRef.current.values()) cancelAnimationFrame(rafId);
           syntheticAnimRef.current.clear();
@@ -5194,10 +5525,21 @@
             next.set(ownerKey, { ...s, status: 'idle' });
             return next;
           });
-          setExecuting(false);
+          if (activeDelegatesRef.current <= 0 && ownerKey === activeKeyRef.current) {
+            setExecuting(false);
+            executingRef.current = false;
+            tryDrainQueue();
+          }
           break;
 
         case 'execution_error': {
+          // "Already executing" means the server was still locked (e.g. naming hook).
+          // Don't show an error — just retry the drain after a delay.
+          if (msg.error && /already executing/i.test(msg.error)) {
+            setTimeout(() => tryDrainQueue(), 2000);
+            break;
+          }
+
           // Remove client-side placeholder if error occurs immediately
           const placeholderId = placeholderIdRef.current;
           if (placeholderId) {
@@ -5214,7 +5556,11 @@
             });
             return next;
           });
-          setExecuting(false);
+          if (activeDelegatesRef.current <= 0 && ownerKey === activeKeyRef.current) {
+            setExecuting(false);
+            executingRef.current = false;
+            tryDrainQueue();
+          }
           setChronoItems(prev => [...prev, {
             id: makeId(), type: 'text', role: 'system',
             content: 'Warning: ' + (msg.error || 'Unknown error'),
@@ -5877,7 +6223,7 @@
       });
 
       // Kick off the SSE-streamed execution via REST
-      api.executeStream(sessionId, content).catch(err => {
+      api.executeStream(sessionId, content, images).catch(err => {
         console.error('[chat] executeStream failed', err);
         setChronoItems(prev => [...prev, {
           id: makeId(), type: 'text', role: 'system',
@@ -5885,6 +6231,8 @@
           streaming: false, order: orderCounterRef.current++,
         }]);
         setExecuting(false);
+        executingRef.current = false;
+        tryDrainQueue();
       });
     }, [connect]);
 
@@ -5896,6 +6244,11 @@
         api.cancelExecution(sessionId, false).catch(err => {
           console.error('[chat] cancelExecution failed', err);
         });
+      }
+      // Pause queue drain — items remain visible, user must Resume
+      cancelCountdown();
+      if (getQueue(key).length > 0) {
+        setQueueDrainStateFn('paused', key);
       }
     }, []);
 
@@ -5951,6 +6304,10 @@
       setActiveTurnId(null);
       setSelectedTurnId(null);
       setSelectedSegmentId(null);
+      // Cancel any countdown and clear queue from the previous session
+      cancelCountdown();
+      activeDelegatesRef.current = 0;
+      if (prevKey) clearSessionQueue(prevKey);
       setExecuting(false);
       setPendingApproval(null);
       placeholderIdRef.current = null;
@@ -6291,6 +6648,11 @@
       }
 
       const target = sessions.get(key) || {};
+
+      // Cancel any active countdown when switching away (must happen before any early return)
+      cancelCountdown(currentKey);
+      activeDelegatesRef.current = 0;
+
       if (target.source === 'history') {
         resumeHistorySession(key);
         return;
@@ -6309,6 +6671,7 @@
           return next;
         });
       }
+      activeKeyRef.current = key;
 
       // Load target session
       const targetItems = target.savedItems || [];
@@ -6316,6 +6679,10 @@
       orderCounterRef.current = nextOrder(targetItems);
       setTurnCount(target.savedTurnCount || 0);
       setExecuting(target.status === 'running');
+      // If the target session had an active countdown, restart it
+      if (target.status !== 'running' && getQueueDrainState(key) === 'countdown') {
+        tryDrainQueue();
+      }
       setPendingApproval(null);
       placeholderIdRef.current = null;
       setSessionId(target.sessionId || null);
@@ -6469,6 +6836,7 @@
                 setSessions=${setSessions}
                 onTogglePin=${handleTogglePin}
                 isPinned=${!!(session && session.sessionId && pinnedSessionIds.has(session.sessionId))}
+                queueCount=${(msgQueueRef.current.get(key) || []).length}
               />
             </div>
           </div>
@@ -6931,10 +7299,29 @@
               turnActivityCounts=${viewMode === 'workspace' ? turnActivityCounts : undefined}
               segmentActivityCounts=${viewMode === 'workspace' ? segmentActivityCounts : undefined}
             />
+            <${QueuePanel}
+              queue=${getQueue()}
+              drainState=${getQueueDrainState()}
+              countdownSecs=${countdownRemaining}
+              onRemove=${(msgId) => {
+                const q = getQueue();
+                const isFirst = q.length > 0 && q[0].id === msgId;
+                if (isFirst && getQueueDrainState() === 'countdown') {
+                  cancelCountdown();
+                  removeFromQueue(msgId);
+                  tryDrainQueue();
+                } else {
+                  removeFromQueue(msgId);
+                }
+              }}
+              onResume=${resumeQueue}
+            />
             <${InputArea}
               onSend=${sendMessage}
               onStop=${stopExecution}
+              onQueueMessage=${pushToQueue}
               executing=${executing}
+              shouldQueue=${executing || getQueueDrainState() === 'countdown' || (getQueueDrainState() === 'paused' && getQueue().length > 0)}
               viewMode=${viewMode}
               setViewMode=${setViewMode}
               activeKey=${activeKey}

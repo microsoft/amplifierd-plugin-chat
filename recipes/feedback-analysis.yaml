@@ -24,12 +24,21 @@ steps:
       For each distinct error pattern found, search GitHub using:
         gh issue list --repo microsoft/amplifier-distro --search "<pattern>" --state all --limit 5 --json number,title,url,state
 
+      For each GitHub issue found, assess confidence:
+      - "high": The session error's message, type, or stack trace directly matches
+        what the issue describes. Same failure mode, same component.
+      - "medium": The issue is in the same component/module area and describes a
+        related (but not identical) failure pattern. Plausibly the same root cause.
+      - "low": Only superficial keyword overlap. The issue mentions similar terms
+        but describes a different problem or context.
+
       Return a JSON array where each element has the schema:
         {
           "source": "github",
           "summary": "#N - title",
           "url": "<issue url>",
-          "status": "open|closed",
+          "state": "open|closed",
+          "confidence": "high|medium|low",
           "relevance": "<brief explanation of why this issue matches>"
         }
 

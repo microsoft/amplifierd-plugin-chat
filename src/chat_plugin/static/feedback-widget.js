@@ -594,6 +594,19 @@
     return [];
   }
 
+  function normalizeAndFilterFindings(arr) {
+    // Normalize: LLM may return "status" instead of "state" — accept both
+    arr.forEach(function (f) {
+      if (!f.state && f.status) { f.state = f.status; delete f.status; }
+    });
+    // Filter: drop low-confidence github findings (not useful to the user)
+    return arr.filter(function (f) {
+      if (f.source !== 'github') return true;
+      var c = (f.confidence || '').toLowerCase();
+      return c === 'high' || c === 'medium';
+    });
+  }
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -867,6 +880,8 @@
         console.log('[feedback-analysis] Complete. Response length:', responseText.length);
         findings = extractFindings(responseText);
         console.log('[feedback-analysis] Extracted', findings.length, 'findings');
+        findings = normalizeAndFilterFindings(findings);
+        console.log('[feedback-analysis] After filtering:', findings.length, 'findings');
         if (findings.length > 0) {
           for (var i = 0; i < findings.length; i++) { findingChecked[i] = true; }
           updateAnalysisUI('complete');
@@ -905,7 +920,7 @@
         if (evtSource.readyState === 2) {
           // Connection closed — try to parse what we have
           if (responseText) {
-            findings = extractFindings(responseText);
+            findings = normalizeAndFilterFindings(extractFindings(responseText));
             if (findings.length > 0) {
               for (var i = 0; i < findings.length; i++) { findingChecked[i] = true; }
               analysisComplete = true;
@@ -1289,7 +1304,8 @@
     //   AmplifierFeedback.simulateFindings()
     simulateFindings: function () {
       var fake = [
-        { source: 'github', number: 42, title: 'Session crashes when delegate tool times out', url: 'https://github.com/microsoft/amplifier-distro/issues/42', state: 'open', relevance: 'Same tool:error timeout pattern on foundation:explorer' },
+        { source: 'github', number: 42, title: 'Session crashes when delegate tool times out', url: 'https://github.com/microsoft/amplifier-distro/issues/42', state: 'open', confidence: 'high', relevance: 'Same tool:error timeout pattern on foundation:explorer' },
+        { source: 'github', number: 38, title: 'Delegate timeout causes orphaned child sessions', url: 'https://github.com/microsoft/amplifier-distro/issues/38', state: 'closed', confidence: 'medium', relevance: 'Related delegate timeout in same component, fixed in v1.2.3' },
         { source: 'session', summary: 'tool:error - delegate to foundation:explorer timed out (turn 7)', timestamp: '2026-03-11T15:23:41Z', turn: 7, event_type: 'tool:error', error: { type: 'asyncio.TimeoutError', message: 'Task timed out after 300.0 seconds', traceback: ['coordinator.py:287 in _execute_tool', 'tasks.py:512 in wait_for -> raise TimeoutError()'] } },
         { source: 'session', summary: 'Provider returned 529 overloaded (turn 4)', timestamp: '2026-03-11T15:21:12Z', turn: 4, event_type: 'provider:error', error: { type: 'anthropic.OverloadedError', message: 'Overloaded: Too many requests', traceback: ['provider.py:142 in complete', '_base_client.py:1468 in _request'] } },
         { source: 'server_log', summary: 'ConnectionResetError on SSE stream', timestamp: '2026-03-11T15:23:42Z', log_level: 'ERROR', log_line: 'ERROR 2026-03-11 15:23:42 uvicorn.error - ConnectionResetError: [Errno 54]', context_lines: ['INFO 15:23:41 POST /sessions/abc123/execute/stream 200', 'ERROR 15:23:42 ConnectionResetError: [Errno 54] Connection reset by peer', 'INFO 15:23:42 SSE subscriber removed for session abc123'] },
