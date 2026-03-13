@@ -1018,6 +1018,7 @@
       className: 'amp-fb-input',
       type: 'text',
       placeholder: 'Brief description\u2026',
+      autocomplete: 'off',
       'aria-required': 'true',
       onInput: syncSubmit,
     });
