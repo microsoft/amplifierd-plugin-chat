@@ -825,12 +825,62 @@
       transition: background 150ms ease-out, border-color 150ms ease-out;
     }
 
+    /* Segment waypoints — assistant text markers in activity panel */
+    .activity-waypoint {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      margin: 2px 0;
+      font-size: 11px;
+      font-style: italic;
+      color: var(--text-secondary);
+      opacity: 0.6;
+      border-top: 1px dashed var(--border);
+      border-bottom: 1px dashed var(--border);
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-height: 28px;
+      transition: opacity 120ms ease;
+    }
+    .activity-waypoint:hover {
+      opacity: 0.9;
+      color: var(--text-primary);
+      background: var(--turn-highlight);
+    }
+    .activity-waypoint-icon {
+      flex-shrink: 0;
+      font-size: 12px;
+      opacity: 0.7;
+    }
+    .activity-waypoint-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .activity-waypoint.segment-active {
+      opacity: 0.9;
+      color: var(--accent-blue);
+      border-color: var(--turn-highlight-border);
+      background: var(--turn-highlight);
+    }
+
+    /* Segment siblings — same turn, different segment */
+    .segment-sibling {
+      opacity: 0.55;
+      transition: opacity 150ms ease-out;
+    }
+
     /* Reduced motion */
     @media (prefers-reduced-motion: reduce) {
       .turn-highlighted,
       .turn-selected,
       .turn-selected-message,
-      .turn-dimmed {
+      .turn-dimmed,
+      .segment-sibling,
+      .activity-waypoint {
         transition: none;
       }
     }
@@ -2587,13 +2637,17 @@
   function deriveTurns(items) {
     const turnMap = new Map();
     const itemTurnMap = new Map();
+    const segmentMap = new Map(); // itemId → segmentId (assistant message id that "concludes" this segment)
     const sorted = [...items].sort((a, b) => a.order - b.order);
 
     let currentTurnId = null;
     let turnNumber = 0;
+    let pendingActivityIds = []; // activities waiting for a segment anchor
 
     for (const item of sorted) {
       if (item.type === 'text' && item.role === 'user') {
+        // Flush any orphan activities from previous turn's last segment
+        pendingActivityIds = [];
         turnNumber++;
         currentTurnId = item.id;
         turnMap.set(currentTurnId, {
@@ -2603,12 +2657,42 @@
           startOrder: item.order,
         });
       }
+
       if (currentTurnId) {
         itemTurnMap.set(item.id, currentTurnId);
       }
+
+      // Non-text items accumulate as pending segment members
+      if (item.type !== 'text') {
+        pendingActivityIds.push(item.id);
+        continue;
+      }
+
+      // Assistant text: claims all pending activities as its segment
+      if (item.type === 'text' && item.role === 'assistant' && currentTurnId) {
+        const segId = item.id;
+        segmentMap.set(segId, segId); // the text itself belongs to its segment
+        for (const id of pendingActivityIds) {
+          segmentMap.set(id, segId);
+        }
+        pendingActivityIds = [];
+      }
     }
 
-    return { turnMap, itemTurnMap };
+    // Orphan activities after last assistant text in the last turn:
+    // attach to the last segment so clicking the last message shows
+    // "everything from that point to turn end"
+    if (pendingActivityIds.length > 0) {
+      const segValues = [...segmentMap.values()];
+      const lastSegId = segValues.length > 0 ? segValues[segValues.length - 1] : null;
+      if (lastSegId) {
+        for (const id of pendingActivityIds) {
+          segmentMap.set(id, lastSegId);
+        }
+      }
+    }
+
+    return { turnMap, itemTurnMap, segmentMap };
   }
 
   /**
@@ -2899,6 +2983,23 @@
     `;
   }
 
+  function ActivityWaypoint({ item, isSegmentActive, onClick }) {
+    const preview = item.content
+      ? item.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+      : '';
+    const cls = 'activity-waypoint' + (isSegmentActive ? ' segment-active' : '');
+    return html`
+      <div class=${cls} onClick=${onClick}
+        title="Click to scroll to this message"
+        role="link" tabindex="0"
+        aria-label=${'Assistant message: ' + preview}
+        onKeyDown=${e => (e.key === 'Enter' || e.key === ' ') && onClick && onClick(e)}>
+        <span class="activity-waypoint-icon">💬</span>
+        <span class="activity-waypoint-text">${preview}${item.content && item.content.length > 80 ? '…' : ''}</span>
+      </div>
+    `;
+  }
+
   function ToolCallCard({ item, isActivity, subSessionsRef, subSessionRevision, onNavigateSession }) {
     const [expanded, setExpanded] = useState(false);
     const statusIcon = getToolStatusIcon(item.toolStatus);
@@ -3113,8 +3214,14 @@
     `;
   }
 
-  function ChronoItem({ item, isActivity, subSessionsRef, subSessionRevision, onNavigateSession }) {
+  function ChronoItem({ item, isActivity, isSegmentActive, onWaypointClick, subSessionsRef, subSessionRevision, onNavigateSession }) {
     if (item.type === 'text') {
+      // In activity panel, assistant text renders as a compact waypoint
+      if (isActivity && item.role === 'assistant') {
+        return html`<${ActivityWaypoint} item=${item}
+          isSegmentActive=${isSegmentActive}
+          onClick=${onWaypointClick} />`;
+      }
       const cls = 'text-block'
         + (item.role === 'user' ? ' user-message' : '')
         + (item.role === 'system' ? ' system-message' : '')
@@ -3156,6 +3263,8 @@
     hoveredTurnId,
     setHoveredTurnId,
     selectedTurnId,
+    selectedSegmentId,
+    segmentMap,
     onTurnSelect,
     isActivityPanel = false,
     onTurnSeparatorClick,
@@ -3312,29 +3421,54 @@
             const prevTurnId = i > 0 ? (itemTurnMap ? itemTurnMap.get(sorted[i - 1].id) : null) : null;
             const showSep = isActivityPanel && turnMap && turnId && turnId !== prevTurnId;
             const turn = showSep ? turnMap.get(turnId) : null;
+            const itemSegId = segmentMap ? segmentMap.get(item.id) : null;
 
-            // Selected (click/tap) takes priority over hovered (mouse preview)
-            const effectiveTurnId = selectedTurnId || hoveredTurnId;
-            const isSelected = selectedTurnId && turnId === selectedTurnId;
-            const isHovered = !selectedTurnId && hoveredTurnId && turnId === hoveredTurnId;
-            const isDimmed = effectiveTurnId && turnId && turnId !== effectiveTurnId;
-
-            // Build class list
+            // Determine highlight class with segment awareness
             let itemCls = '';
-            if (isSelected) {
-              itemCls = isActivityPanel ? 'turn-selected turn-selected-border' : 'turn-selected-message';
-            } else if (isHovered) {
-              itemCls = 'turn-highlighted';
-            } else if (isDimmed) {
-              itemCls = 'turn-dimmed';
+            const effectiveTurnId = selectedTurnId || hoveredTurnId;
+
+            if (selectedSegmentId) {
+              // Segment-level selection active
+              if (itemSegId === selectedSegmentId) {
+                itemCls = isActivityPanel ? 'turn-selected turn-selected-border' : 'turn-selected-message';
+              } else if (turnId === selectedTurnId) {
+                itemCls = 'segment-sibling'; // same turn, different segment
+              } else if (turnId) {
+                itemCls = 'turn-dimmed';
+              }
+            } else if (selectedTurnId) {
+              // Turn-level selection
+              if (turnId === selectedTurnId) {
+                itemCls = isActivityPanel ? 'turn-selected turn-selected-border' : 'turn-selected-message';
+              } else if (turnId) {
+                itemCls = 'turn-dimmed';
+              }
+            } else if (hoveredTurnId) {
+              // Hover preview
+              if (turnId === hoveredTurnId) {
+                itemCls = 'turn-highlighted';
+              } else if (turnId) {
+                itemCls = 'turn-dimmed';
+              }
             }
+
+            // Determine click behavior: user msg → turn-level, assistant msg → segment-level
+            const isAssistantText = item.type === 'text' && item.role === 'assistant';
+            const handleClick = () => {
+              if (!onTurnSelect || !turnId) return;
+              if (isAssistantText && itemSegId) {
+                onTurnSelect(turnId, itemSegId); // segment-level
+              } else {
+                onTurnSelect(turnId); // turn-level
+              }
+            };
 
             return html`
               ${showSep && turn && html`<${TurnSeparator}
                 key=${'sep-' + turnId}
                 turn=${turn}
-                isHighlighted=${isSelected ? false : (hoveredTurnId === turnId)}
-                isSelected=${selectedTurnId === turnId}
+                isHighlighted=${!selectedTurnId && hoveredTurnId === turnId}
+                isSelected=${selectedTurnId === turnId && !selectedSegmentId}
                 onClick=${() => {
                   onTurnSelect && onTurnSelect(turnId);
                   onTurnSeparatorClick && onTurnSeparatorClick(turnId);
@@ -3344,10 +3478,22 @@
                 data-turn-id=${turnId || undefined}
                 onMouseEnter=${() => turnId && debouncedSetHoveredTurnId(turnId)}
                 onMouseLeave=${() => debouncedSetHoveredTurnId(null)}
-                onClick=${() => onTurnSelect && turnId && onTurnSelect(turnId)}
+                onClick=${handleClick}
                 style=${turnId ? 'cursor: pointer;' : undefined}>
                 <${ChronoItem} key=${item.id} item=${item}
                   isActivity=${isActivityPanel}
+                  isSegmentActive=${selectedSegmentId && itemSegId === selectedSegmentId}
+                  onWaypointClick=${isActivityPanel && isAssistantText ? (e) => {
+                    e && e.stopPropagation && e.stopPropagation();
+                    // Scroll to the full message in main panel
+                    const el = document.getElementById(item.id);
+                    if (el) {
+                      const prm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                      el.scrollIntoView({ behavior: prm ? 'instant' : 'smooth', block: 'center' });
+                    }
+                    // Select the segment
+                    onTurnSelect && onTurnSelect(turnId, itemSegId);
+                  } : undefined}
                   subSessionsRef=${subSessionsRef} subSessionRevision=${subSessionRevision}
                   onNavigateSession=${onNavigateSession} />
               </div>
@@ -5483,6 +5629,7 @@
             setHoveredTurnId(null);
             setActiveTurnId(null);
             setSelectedTurnId(null);
+            setSelectedSegmentId(null);
             return;
           case '/workspace':
             setViewMode(m => m === 'workspace' ? 'chat' : 'workspace');
@@ -5621,6 +5768,7 @@
       setHoveredTurnId(null);
       setActiveTurnId(null);
       setSelectedTurnId(null);
+      setSelectedSegmentId(null);
       setExecuting(false);
       setPendingApproval(null);
       placeholderIdRef.current = null;
@@ -6190,14 +6338,24 @@
     }, []);
 
     // Turn correlation
-    const { turnMap, itemTurnMap } = useMemo(() => deriveTurns(chronoItems), [chronoItems]);
+    const { turnMap, itemTurnMap, segmentMap } = useMemo(() => deriveTurns(chronoItems), [chronoItems]);
     const [hoveredTurnId, setHoveredTurnId] = useState(null);
     const [activeTurnId, setActiveTurnId] = useState(null);
     const [selectedTurnId, setSelectedTurnId] = useState(null);
+    const [selectedSegmentId, setSelectedSegmentId] = useState(null);
 
-    // Toggle turn selection (click/tap). Same turn = deselect.
-    const handleTurnSelect = useCallback((turnId) => {
-      setSelectedTurnId(prev => prev === turnId ? null : turnId);
+    // Toggle turn/segment selection (click/tap).
+    // User message click → turn-level. Assistant message click → segment-level.
+    const handleTurnSelect = useCallback((turnId, segId) => {
+      if (segId) {
+        // Segment-level: toggle segment within turn
+        setSelectedSegmentId(prev => prev === segId ? null : segId);
+        setSelectedTurnId(turnId);
+      } else {
+        // Turn-level: toggle whole turn, clear segment
+        setSelectedTurnId(prev => prev === turnId ? null : turnId);
+        setSelectedSegmentId(null);
+      }
     }, []);
 
     // Scroll the activity panel to a turn's separator
@@ -6222,7 +6380,7 @@
     }, [turnMap]);
 
     const mainFilter = viewMode === 'workspace' ? (i => i.type === 'text') : null;
-    const activityFilter = viewMode === 'workspace' ? (i => i.type !== 'text') : null;
+    const activityFilter = viewMode === 'workspace' ? (i => i.type !== 'text' || (i.type === 'text' && i.role === 'assistant')) : null;
 
     return html`
       <div id="header">
@@ -6526,8 +6684,10 @@
               hoveredTurnId=${viewMode === 'workspace' ? hoveredTurnId : undefined}
               setHoveredTurnId=${viewMode === 'workspace' ? setHoveredTurnId : undefined}
               selectedTurnId=${viewMode === 'workspace' ? selectedTurnId : undefined}
-              onTurnSelect=${viewMode === 'workspace' ? (turnId) => {
-                handleTurnSelect(turnId);
+              selectedSegmentId=${viewMode === 'workspace' ? selectedSegmentId : undefined}
+              segmentMap=${viewMode === 'workspace' ? segmentMap : undefined}
+              onTurnSelect=${viewMode === 'workspace' ? (turnId, segId) => {
+                handleTurnSelect(turnId, segId);
                 scrollActivityToTurn(turnId);
               } : undefined}
             />
@@ -6569,8 +6729,10 @@
                   hoveredTurnId=${hoveredTurnId}
                   setHoveredTurnId=${setHoveredTurnId}
                   selectedTurnId=${selectedTurnId}
-                  onTurnSelect=${(turnId) => {
-                    handleTurnSelect(turnId);
+                  selectedSegmentId=${selectedSegmentId}
+                  segmentMap=${segmentMap}
+                  onTurnSelect=${(turnId, segId) => {
+                    handleTurnSelect(turnId, segId);
                   }}
                   isActivityPanel=${true}
                   onTurnSeparatorClick=${(turnId) => {
