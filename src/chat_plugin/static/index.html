@@ -775,18 +775,27 @@
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
     }
 
-    /* Turn hover cross-highlight */
+    /* Turn hover preview (desktop only, lightweight) */
     .turn-highlighted {
       background: var(--turn-highlight);
       transition: background 120ms ease-out;
     }
-    .turn-highlighted.turn-highlighted-border {
+
+    /* Turn selected (click/tap, persistent, stronger) */
+    .turn-selected {
+      background: var(--turn-pulse-peak);
+      transition: background 150ms ease-out;
+    }
+    .turn-selected.turn-selected-border {
       border-left: 2px solid var(--turn-highlight-border);
+      padding-left: 6px;
     }
     .turn-dimmed {
       opacity: 0.4;
       transition: opacity 150ms ease-out;
     }
+
+    /* Separator highlight for hover */
     .turn-separator.turn-highlighted::before,
     .turn-separator.turn-highlighted::after {
       background: var(--turn-highlight-border);
@@ -795,25 +804,34 @@
       color: var(--accent-blue);
     }
 
-    /* Click-to-scroll arrival pulse */
-    @keyframes turn-pulse {
-      0%   { background: var(--turn-pulse-peak); }
-      40%  { background: var(--turn-highlight); }
-      100% { background: transparent; }
+    /* Separator highlight for selected */
+    .turn-separator.turn-selected::before,
+    .turn-separator.turn-selected::after {
+      background: var(--accent-blue);
     }
-    .turn-scroll-target {
-      animation: turn-pulse 800ms ease-out forwards;
+    .turn-separator.turn-selected .turn-separator-number {
+      color: var(--accent-blue);
+    }
+    .turn-separator.turn-selected .turn-separator-message {
+      color: var(--text-primary);
+    }
+
+    /* Selected message in main panel gets a visible left accent */
+    .turn-selected-message {
+      border-left: 3px solid var(--accent-blue);
+      padding-left: 8px;
+      background: var(--turn-pulse-peak);
+      border-radius: 4px;
+      transition: background 150ms ease-out, border-color 150ms ease-out;
     }
 
     /* Reduced motion */
     @media (prefers-reduced-motion: reduce) {
       .turn-highlighted,
+      .turn-selected,
+      .turn-selected-message,
       .turn-dimmed {
         transition: none;
-      }
-      .turn-scroll-target {
-        animation: none;
-        background: var(--turn-highlight);
       }
     }
 
@@ -2840,11 +2858,11 @@
     `;
   }
 
-  function TurnSeparator({ turn, isHighlighted, onClick }) {
+  function TurnSeparator({ turn, isHighlighted, isSelected, onClick }) {
     const preview = turn.userItem.content
       ? turn.userItem.content.replace(/\s+/g, ' ').trim().slice(0, 50)
       : '';
-    const cls = 'turn-separator' + (isHighlighted ? ' turn-highlighted' : '');
+    const cls = 'turn-separator' + (isSelected ? ' turn-selected' : isHighlighted ? ' turn-highlighted' : '');
     return html`
       <div class=${cls} data-turn-id=${turn.turnId}
         onClick=${onClick} tabindex="0"
@@ -3137,10 +3155,11 @@
     itemTurnMap,
     hoveredTurnId,
     setHoveredTurnId,
+    selectedTurnId,
+    onTurnSelect,
     isActivityPanel = false,
     onTurnSeparatorClick,
     onScrollTurnChange,
-    onItemClick,
   }) {
     // Hover debounce: 50ms intent delay to prevent strobe during fast scanning
     const hoverTimerRef = useRef(null);
@@ -3292,26 +3311,41 @@
             const turnId = itemTurnMap ? itemTurnMap.get(item.id) : null;
             const prevTurnId = i > 0 ? (itemTurnMap ? itemTurnMap.get(sorted[i - 1].id) : null) : null;
             const showSep = isActivityPanel && turnMap && turnId && turnId !== prevTurnId;
-            const isItemHighlighted = hoveredTurnId && turnId === hoveredTurnId;
-            const isItemDimmed = hoveredTurnId && turnId && turnId !== hoveredTurnId;
             const turn = showSep ? turnMap.get(turnId) : null;
 
-            const itemCls = isItemHighlighted ? 'turn-highlighted' + (isActivityPanel ? ' turn-highlighted-border' : '')
-              : isItemDimmed ? 'turn-dimmed' : '';
+            // Selected (click/tap) takes priority over hovered (mouse preview)
+            const effectiveTurnId = selectedTurnId || hoveredTurnId;
+            const isSelected = selectedTurnId && turnId === selectedTurnId;
+            const isHovered = !selectedTurnId && hoveredTurnId && turnId === hoveredTurnId;
+            const isDimmed = effectiveTurnId && turnId && turnId !== effectiveTurnId;
+
+            // Build class list
+            let itemCls = '';
+            if (isSelected) {
+              itemCls = isActivityPanel ? 'turn-selected turn-selected-border' : 'turn-selected-message';
+            } else if (isHovered) {
+              itemCls = 'turn-highlighted';
+            } else if (isDimmed) {
+              itemCls = 'turn-dimmed';
+            }
 
             return html`
               ${showSep && turn && html`<${TurnSeparator}
                 key=${'sep-' + turnId}
                 turn=${turn}
-                isHighlighted=${hoveredTurnId === turnId}
-                onClick=${() => onTurnSeparatorClick && onTurnSeparatorClick(turnId)}
+                isHighlighted=${isSelected ? false : (hoveredTurnId === turnId)}
+                isSelected=${selectedTurnId === turnId}
+                onClick=${() => {
+                  onTurnSelect && onTurnSelect(turnId);
+                  onTurnSeparatorClick && onTurnSeparatorClick(turnId);
+                }}
               />`}
               <div class=${itemCls || undefined}
                 data-turn-id=${turnId || undefined}
                 onMouseEnter=${() => turnId && debouncedSetHoveredTurnId(turnId)}
                 onMouseLeave=${() => debouncedSetHoveredTurnId(null)}
-                onClick=${() => !isActivityPanel && onItemClick && turnId && onItemClick(turnId)}
-                style=${!isActivityPanel && turnId ? 'cursor: pointer;' : undefined}>
+                onClick=${() => onTurnSelect && turnId && onTurnSelect(turnId)}
+                style=${turnId ? 'cursor: pointer;' : undefined}>
                 <${ChronoItem} key=${item.id} item=${item}
                   isActivity=${isActivityPanel}
                   subSessionsRef=${subSessionsRef} subSessionRevision=${subSessionRevision}
@@ -5448,6 +5482,7 @@
             setChronoItems([]);
             setHoveredTurnId(null);
             setActiveTurnId(null);
+            setSelectedTurnId(null);
             return;
           case '/workspace':
             setViewMode(m => m === 'workspace' ? 'chat' : 'workspace');
@@ -5585,6 +5620,7 @@
       setTurnCount(0);
       setHoveredTurnId(null);
       setActiveTurnId(null);
+      setSelectedTurnId(null);
       setExecuting(false);
       setPendingApproval(null);
       placeholderIdRef.current = null;
@@ -6157,6 +6193,33 @@
     const { turnMap, itemTurnMap } = useMemo(() => deriveTurns(chronoItems), [chronoItems]);
     const [hoveredTurnId, setHoveredTurnId] = useState(null);
     const [activeTurnId, setActiveTurnId] = useState(null);
+    const [selectedTurnId, setSelectedTurnId] = useState(null);
+
+    // Toggle turn selection (click/tap). Same turn = deselect.
+    const handleTurnSelect = useCallback((turnId) => {
+      setSelectedTurnId(prev => prev === turnId ? null : turnId);
+    }, []);
+
+    // Scroll the activity panel to a turn's separator
+    const scrollActivityToTurn = useCallback((turnId) => {
+      if (!activityScrollRef.current) return;
+      const el = activityScrollRef.current.querySelector('.turn-separator[data-turn-id="' + turnId + '"]');
+      if (el) {
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        el.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'start' });
+      }
+    }, []);
+
+    // Scroll the main panel to a turn's user message
+    const scrollMainToTurn = useCallback((turnId) => {
+      const turn = turnMap.get(turnId);
+      if (!turn) return;
+      const el = document.getElementById(turn.userItem.id);
+      if (el) {
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        el.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'center' });
+      }
+    }, [turnMap]);
 
     const mainFilter = viewMode === 'workspace' ? (i => i.type === 'text') : null;
     const activityFilter = viewMode === 'workspace' ? (i => i.type !== 'text') : null;
@@ -6462,18 +6525,10 @@
               itemTurnMap=${viewMode === 'workspace' ? itemTurnMap : undefined}
               hoveredTurnId=${viewMode === 'workspace' ? hoveredTurnId : undefined}
               setHoveredTurnId=${viewMode === 'workspace' ? setHoveredTurnId : undefined}
-              onItemClick=${viewMode === 'workspace' ? (turnId) => {
-                if (!activityScrollRef.current) return;
-                const sep = activityScrollRef.current.querySelector('.turn-separator[data-turn-id="' + turnId + '"]');
-                if (sep) {
-                  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-                  sep.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'start' });
-                  const items = activityScrollRef.current.querySelectorAll('[data-turn-id="' + turnId + '"]');
-                  items.forEach(el => {
-                    el.classList.add('turn-scroll-target');
-                    setTimeout(() => el.classList.remove('turn-scroll-target'), 800);
-                  });
-                }
+              selectedTurnId=${viewMode === 'workspace' ? selectedTurnId : undefined}
+              onTurnSelect=${viewMode === 'workspace' ? (turnId) => {
+                handleTurnSelect(turnId);
+                scrollActivityToTurn(turnId);
               } : undefined}
             />
             <${InputArea}
@@ -6496,15 +6551,8 @@
                 turnMap=${turnMap}
                 scrollTurnId=${activeTurnId}
                 onNavigateToMessage=${(turnId) => {
-                  const turn = turnMap.get(turnId);
-                  if (!turn) return;
-                  const el = document.getElementById(turn.userItem.id);
-                  if (el) {
-                    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-                    el.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'center' });
-                    el.classList.add('turn-scroll-target');
-                    setTimeout(() => el.classList.remove('turn-scroll-target'), 800);
-                  }
+                  handleTurnSelect(turnId);
+                  scrollMainToTurn(turnId);
                 }}
               />
               <div class="activity-scroll" ref=${activityScrollRef}>
@@ -6520,17 +6568,13 @@
                   itemTurnMap=${itemTurnMap}
                   hoveredTurnId=${hoveredTurnId}
                   setHoveredTurnId=${setHoveredTurnId}
+                  selectedTurnId=${selectedTurnId}
+                  onTurnSelect=${(turnId) => {
+                    handleTurnSelect(turnId);
+                  }}
                   isActivityPanel=${true}
                   onTurnSeparatorClick=${(turnId) => {
-                    const turn = turnMap.get(turnId);
-                    if (!turn) return;
-                    const el = document.getElementById(turn.userItem.id);
-                    if (el) {
-                      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-                      el.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'center' });
-                      el.classList.add('turn-scroll-target');
-                      setTimeout(() => el.classList.remove('turn-scroll-target'), 800);
-                    }
+                    scrollMainToTurn(turnId);
                   }}
                   onScrollTurnChange=${setActiveTurnId}
                 />
