@@ -3103,7 +3103,7 @@
       : '';
     const cls = 'activity-waypoint' + (isSegmentActive ? ' segment-active' : '');
     return html`
-      <div class=${cls} onClick=${onClick}
+      <div class=${cls} id=${item.id} onClick=${onClick}
         title="Click to scroll to this message"
         role="link" tabindex="0"
         aria-label=${'Assistant message: ' + preview}
@@ -6494,6 +6494,24 @@
       }
     }, []);
 
+    // Scroll the activity panel to a segment's waypoint (assistant message rendered in activity panel)
+    const scrollActivityToSegment = useCallback((segId) => {
+      if (!activityScrollRef.current) return;
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // The waypoint has id={item.id} where item.id === segId
+      const segEl = document.getElementById(segId);
+      if (segEl) {
+        segEl.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'center' });
+        return;
+      }
+      // Fallback: scroll to the turn separator
+      const turnId = itemTurnMap.get(segId);
+      if (turnId) {
+        const sep = activityScrollRef.current.querySelector('.turn-separator[data-turn-id="' + turnId + '"]');
+        if (sep) sep.scrollIntoView({ behavior: prefersReducedMotion ? 'instant' : 'smooth', block: 'start' });
+      }
+    }, [itemTurnMap]);
+
     // Scroll the main panel to a turn's user message
     const scrollMainToTurn = useCallback((turnId) => {
       const turn = turnMap.get(turnId);
@@ -6814,7 +6832,11 @@
               segmentMap=${viewMode === 'workspace' ? segmentMap : undefined}
               onTurnSelect=${viewMode === 'workspace' ? (turnId, segId) => {
                 handleTurnSelect(turnId, segId);
-                scrollActivityToTurn(turnId);
+                if (segId) {
+                  scrollActivityToSegment(segId);
+                } else {
+                  scrollActivityToTurn(turnId);
+                }
               } : undefined}
               turnActivityCounts=${viewMode === 'workspace' ? turnActivityCounts : undefined}
               segmentActivityCounts=${viewMode === 'workspace' ? segmentActivityCounts : undefined}
