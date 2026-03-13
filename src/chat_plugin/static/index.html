@@ -1234,7 +1234,7 @@
       font-size: 14px;
       resize: none;
       line-height: 1.4;
-      min-height: 38px;
+      min-height: 44px;
       max-height: 200px;
       overflow-y: auto;
       outline: none;
@@ -1244,7 +1244,7 @@
     #message-input::placeholder { color: var(--text-muted); }
 
     .input-btn {
-      height: 38px;
+      min-height: 44px;
       padding: 0 14px;
       border: none;
       border-radius: 6px;
@@ -1560,14 +1560,21 @@
     }
     .queue-item--countdown {
       border-left: 3px solid var(--accent-blue, #3b82f6);
-      animation: pulse-border 1s ease-in-out infinite;
+      animation: queue-glow 2s ease-in-out infinite;
     }
-    @keyframes pulse-border {
-      0%, 100% { border-left-color: var(--accent-blue, #3b82f6); }
-      50% { border-left-color: transparent; }
+    @keyframes queue-glow {
+      0%, 100% { background-color: transparent; }
+      50% { background-color: rgba(59, 130, 246, 0.06); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .queue-item--countdown {
+        animation: none;
+        background-color: rgba(59, 130, 246, 0.06);
+      }
     }
     .queue-item--paused {
-      opacity: 0.5;
+      opacity: 0.7;
+      border-left-color: var(--text-muted, #555);
     }
     .queue-item-text {
       flex: 1;
@@ -1585,7 +1592,7 @@
       font-size: 11px;
       color: var(--accent-blue, #3b82f6);
       white-space: nowrap;
-      margin-right: 4px;
+      margin-left: auto;
     }
     .queue-item-remove {
       min-width: 44px;
@@ -1606,6 +1613,11 @@
       color: var(--text-primary, var(--text, #ccc));
       background: var(--bg-hover, rgba(128,128,128,0.1));
     }
+    .queue-item-remove:focus-visible,
+    .queue-panel-btn:focus-visible {
+      outline: 2px solid var(--accent-blue, #3b82f6);
+      outline-offset: 2px;
+    }
     .queue-panel-btn {
       min-height: 44px;
       width: 100%;
@@ -1614,16 +1626,21 @@
       justify-content: center;
       padding: 8px 12px;
       margin-top: 4px;
-      border: 1px solid var(--border);
+      border: 1px solid var(--accent-blue, #3b82f6);
       border-radius: 6px;
-      background: var(--bg-tertiary, var(--bg, transparent));
-      color: var(--text-primary, var(--text, #ccc));
+      background: rgba(59, 130, 246, 0.08);
+      color: var(--accent-blue, #3b82f6);
       font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
       /* 44px min tap target for accessibility */
     }
     .queue-panel-btn:hover {
-      background: var(--bg-hover, rgba(128,128,128,0.1));
+      background: rgba(59, 130, 246, 0.15);
+    }
+    .session-stale-badge.queue-badge {
+      border-color: rgba(59, 130, 246, 0.35);
+      color: var(--accent-blue, #3b82f6);
     }
   </style>
 </head>
@@ -3355,7 +3372,7 @@
             ? html`<span class="session-stale-badge ${session.isNewSession ? 'new-session' : ''}">${session.isNewSession ? 'New' : 'Updated'}</span>`
             : null}
           ${queueCount > 0
-            ? html`<span class="session-stale-badge">${queueCount} queued</span>`
+            ? html`<span class="session-stale-badge queue-badge">${queueCount} queued</span>`
             : null}
         </div>
         ${preview ? html`<div class="session-card-cwd" title=${session.lastUserMessage || ''}>${preview}</div>` : null}
@@ -3370,10 +3387,11 @@
     const isCountdown = drainState === 'countdown';
 
     return html`
-      <div class="queue-panel">
+      <div class="queue-panel" role="region" aria-label="Message queue">
         <div class="queue-panel-header">
-          <span>Queued messages (${queue.length})</span>
+          <span aria-live="polite" aria-atomic="true">Queued messages (${queue.length})</span>
         </div>
+        <div role="list">
         ${queue.map((msg, idx) => {
           const isFirst = idx === 0;
           const showCountdown = isFirst && isCountdown && countdownSecs !== null;
@@ -3381,15 +3399,16 @@
           if (showCountdown) cls += ' queue-item--countdown';
           if (isPaused) cls += ' queue-item--paused';
           return html`
-            <div class=${cls} key=${msg.id}>
-              ${showCountdown && html`<span class="queue-item-countdown-label">Sending in ${countdownSecs}s…</span>`}
+            <div class=${cls} key=${msg.id} role="listitem">
               <span class="queue-item-text">
                 ${msg.content || ''}${msg.images && msg.images.length > 0 && html`<span class="queue-item-image"> [image]</span>`}
               </span>
-              <button class="queue-item-remove" onClick=${() => onRemove(msg.id)} aria-label="Remove queued message" title="Remove">×</button>
+              ${showCountdown && html`<span class="queue-item-countdown-label">Sending in ${countdownSecs}s…</span>`}
+              <button class="queue-item-remove" onClick=${() => onRemove(msg.id)} aria-label="Remove queued message: ${(msg.content || '').slice(0, 40)}" title="Remove">×</button>
             </div>
           `;
         })}
+        </div>
         ${isPaused && html`
           <button class="queue-panel-btn" onClick=${onResume}>
             Resume queue (${queue.length} remaining)

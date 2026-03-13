@@ -57,9 +57,10 @@ class TestTask7QueuePanelCSS:
         """.queue-panel-btn CSS class is present."""
         assert ".queue-panel-btn {" in html_content
 
-    def test_pulse_border_animation_in_style(self, html_content):
-        """pulse-border keyframe animation is defined."""
-        assert "@keyframes pulse-border {" in html_content
+    def test_queue_glow_animation_in_style(self, html_content):
+        """queue-glow keyframe animation is defined with reduced-motion fallback."""
+        assert "@keyframes queue-glow {" in html_content
+        assert "prefers-reduced-motion" in html_content
 
     def test_queue_panel_mobile_max_height(self, html_content):
         """Mobile media query reduces queue-panel max-height to 25vh."""
@@ -107,8 +108,8 @@ class TestTask8QueuePanelComponent:
         assert "Queued messages (" in html_content
 
     def test_queuepanel_renders_remove_button(self, html_content):
-        """QueuePanel renders remove button with aria-label."""
-        assert 'aria-label="Remove queued message"' in html_content
+        """QueuePanel renders remove button with contextual aria-label."""
+        assert 'aria-label="Remove queued message:' in html_content
 
     def test_queuepanel_renders_countdown_label(self, html_content):
         """QueuePanel renders countdown label when in countdown state."""
