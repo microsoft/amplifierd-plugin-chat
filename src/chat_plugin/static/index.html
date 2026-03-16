@@ -4771,6 +4771,7 @@
     const historyResumeTokenRef = useRef(0);
     const dragStateRef = useRef(null);
     // E2: Synthetic streaming — track which blocks received real deltas
+    const watchdogTimerRef = useRef(null);
     const seenDeltasRef = useRef(new Set());
     const syntheticAnimRef = useRef(new Map());
     // Accumulates token usage across LLM calls within a single turn
@@ -5252,6 +5253,35 @@
     }
 
     // —— WebSocket event handler ————————————————————————————————————
+    const clearWatchdogTimer = useCallback(() => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+    }, []);
+
+    const startWatchdogTimer = useCallback(() => {
+      clearWatchdogTimer();
+      watchdogTimerRef.current = setTimeout(() => {
+        console.warn('[chat] Watchdog: cleaning up stuck streaming state');
+        setChronoItems(prev => {
+          if (!prev.some(i => i.streaming)) return prev;
+          return prev.map(i => i.streaming ? { ...i, streaming: false } : i);
+        });
+        const key = activeKeyRef.current;
+        if (!key) return;
+        setSessions(prev => {
+          const next = new Map(prev);
+          const s = next.get(key);
+          if (s && s.status === 'running') {
+            next.set(key, { ...s, status: 'idle' });
+            return next;
+          }
+          return prev;
+        });
+      }, 5000);
+    }, [clearWatchdogTimer]);
+
     const handleWsMessage = useCallback((msg, sourceKey = null) => {
       const ownerKey = sourceKey || activeKeyRef.current;
       const isActiveStream = ownerKey === activeKeyRef.current;
@@ -5383,7 +5413,16 @@
           }
         }
 
-        if (msg.type !== 'auth_ok' && msg.type !== 'pong' && msg.type !== 'prompt_complete' && msg.type !== 'heartbeat') {
+        const replayableEvents = new Set([
+          // Use UI names — msg.type is already mapped via SSE_EVENT_TYPE_MAP
+          'content_start', 'content_delta', 'content_end',
+          'thinking_delta', 'thinking_final',
+          'tool_call', 'tool_result',
+          'session_fork', 'display_message',
+          'execution_start', 'execution_end',
+        ]);
+
+        if (replayableEvents.has(msg.type)) {
           const queued = pendingEventsRef.current.get(ownerKey) || [];
           queued.push(msg);
           pendingEventsRef.current.set(ownerKey, queued);
@@ -5502,6 +5541,7 @@
               id: itemId, type: 'text', content: '', streaming: true,
               order: orderCounterRef.current++, role: 'assistant',
             }]);
+            startWatchdogTimer();
           } else if (msg.block_type === 'thinking') {
             const itemId = makeId();
             const localIdx = getLocalIndex(msg.index);
@@ -5551,6 +5591,7 @@
           const localIdx = getLocalIndex(msg.index);
           // E2: mark this block as having received real streaming deltas
           seenDeltasRef.current.add(localIdx);
+          startWatchdogTimer();
           const textItemId = blockMapRef.current['id-' + localIdx];
           const thinkingItemId = blockMapRef.current['thinking-id-' + localIdx];
 
@@ -5558,6 +5599,10 @@
             const el = document.getElementById(textItemId);
             if (el) {
               el.textContent += delta;
+              // Keep ref in sync so switchSession saves accumulated content
+              // (mirrors the sub-session pattern at lines 5572-5575).
+              const refItem = chronoItemsRef.current.find(item => item.id === textItemId);
+              if (refItem) refItem.content += delta;
             } else {
               setChronoItems(prev => prev.map(item =>
                 item.id === textItemId
@@ -5679,6 +5724,7 @@
             }
             return item;
           }));
+          clearWatchdogTimer();
           break;
         }
 
@@ -5919,6 +5965,7 @@
             if (ownerKey === activeKeyRef.current) {
               setExecuting(false);
               executingRef.current = false;
+              clearWatchdogTimer();
               tryDrainQueue();
             }
             setTurnCount(nextTurn ?? (turnCountRef.current + 1));
@@ -6524,8 +6571,13 @@
       const onFocus = () => refreshHistory();
       const onVisibility = () => {
         if (document.visibilityState === 'visible') {
-          // SSE reconnects automatically; just refresh session list
+          // SSE reconnects automatically; refresh session list and also
+          // the active transcript, as it may have been missed during
+          // backgrounding.
           refreshHistory();
+          if (activeKeyRef.current) {
+            refreshSessionFromDisk(activeKeyRef.current, { activeOnly: true, notifyBottom: true });
+          }
         }
       };
       const intervalId = window.setInterval(() => {
@@ -7093,7 +7145,7 @@
     const refreshSessionFromDisk = useCallback((key, options = {}) => {
       const target = sessionsRef.current.get(key);
       if (!target || !target.sessionId) return;
-      if (target.status === 'running' || target.status === 'loading_history') return;
+      if (target.status === 'loading_history') return;
       if (diskRefreshInFlightRef.current.has(key)) return;
 
       diskRefreshInFlightRef.current.add(key);
@@ -7148,6 +7200,12 @@
           setTurnCount(nextTurns);
           setExecuting(false);
           setPendingApproval(null);
+          // After a successful refresh, clear any stuck streaming states
+          // that might have been persisted.
+          setChronoItems(prev => {
+            if (!prev.some(i => i.streaming)) return prev;
+            return prev.map(i => i.streaming ? { ...i, streaming: false } : i);
+          });
           if (notifyBottom && hasNewMessages) {
             setDiskUpdateNoticeSignal(v => v + 1);
           }
@@ -7170,6 +7228,7 @@
     }, []);
 
     const switchSession = useCallback((key) => {
+      clearWatchdogTimer();
       const currentKey = activeKeyRef.current;
       if (key === currentKey) return;
 
@@ -7199,6 +7258,7 @@
             savedItems: chronoItemsRef.current,
             savedTurnCount: turnCountRef.current,
             savedPlaceholderId: placeholderIdRef.current,
+            savedBlockMap: { ...blockMapRef.current },
           });
           return next;
         });
@@ -7228,7 +7288,9 @@
       setActiveTurnId(null);
       setSelectedTurnId(null);
       setSelectedSegmentId(null);
-      blockMapRef.current = {};
+      // Restore blockMapRef so queued content_delta/content_end events can
+      // find their target items during replay.
+      blockMapRef.current = target.savedBlockMap || {};
       resetSubSessionState();
       cycleRef.current = 0;
       localIndexRef.current = 0;
