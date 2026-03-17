@@ -3985,6 +3985,8 @@
         audioRef.current = audio;
         audio.onended = () => { setPlayState('idle'); audioRef.current = null; URL.revokeObjectURL(url); };
         audio.onerror = () => { setPlayState('idle'); audioRef.current = null; URL.revokeObjectURL(url); };
+        // Stop any active voice recording (mutual exclusion with mic input)
+        window.dispatchEvent(new CustomEvent('amplifier-tts-playback-start'));
         await audio.play();
         setPlayState('playing');
       } catch (err) {
@@ -4005,6 +4007,16 @@
     // Cleanup audio on unmount
     useEffect(() => () => {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    }, []);
+
+    // Auto-pause TTS when voice recording starts (prevent audio bleed into mic)
+    useEffect(() => {
+      const pauseForRecording = () => {
+        if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+        setPlayState('idle');
+      };
+      window.addEventListener('amplifier-voice-recording-start', pauseForRecording);
+      return () => window.removeEventListener('amplifier-voice-recording-start', pauseForRecording);
     }, []);
 
     return html`
@@ -4851,6 +4863,9 @@
           reader.readAsDataURL(blob);
         };
 
+        // Pause any active TTS playback to prevent audio bleed into mic
+        window.dispatchEvent(new CustomEvent('amplifier-voice-recording-start'));
+
         mr.start(250);
         mediaRecorderRef.current = mr;
         setVoiceState('recording');
@@ -4905,6 +4920,13 @@
     }, [voiceState, sttReady, startRecording, stopRecording, checkSttReady]);
 
     useEffect(() => () => { stopRecording(); }, [stopRecording]);
+
+    // Auto-stop recording when TTS playback starts (mutual exclusion with speaker)
+    useEffect(() => {
+      const stopForTts = () => { stopRecording(); };
+      window.addEventListener('amplifier-tts-playback-start', stopForTts);
+      return () => window.removeEventListener('amplifier-tts-playback-start', stopForTts);
+    }, [stopRecording]);
 
     const fmtVoiceTime = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 
@@ -4973,7 +4995,7 @@
           ${labsVoice && html`<button
             class=${'input-btn mic-btn' + (voiceState === 'recording' ? ' recording' : '') + (voiceState === 'transcribing' ? ' transcribing' : '')}
             onClick=${toggleVoice}
-            disabled=${executing || voiceState === 'transcribing'}
+            disabled=${voiceState === 'transcribing'}
             title=${voiceState === 'idle' ? 'Voice input' : voiceState === 'recording' ? 'Stop recording' : 'Transcribing...'}
             aria-label=${voiceState === 'idle' ? 'Voice input' : voiceState === 'recording' ? 'Stop recording' : 'Transcribing'}
           >
