@@ -6202,6 +6202,8 @@
                 const domText = domEl ? domEl.textContent : '';
                 const finalText = payloadText || domText;
                 const parsedHtml = sanitizeHtml(marked.parse(finalText));
+                // Clear DOM text before re-render (same orphan-node fix)
+                if (domEl) domEl.textContent = '';
                 updateSubSessionContent(subKey, sub => {
                   const item = sub.content.find(c => c.id === textItemId);
                   if (item) {
@@ -6249,6 +6251,8 @@
               if (!tickEl || pos >= fullText.length) {
                 // Animation complete: finalize with parsed markdown
                 syntheticAnimRef.current.delete(localIdx);
+                // Clear DOM text before Preact re-render (same orphan-node fix)
+                if (tickEl) tickEl.textContent = '';
                 const parsedHtml = sanitizeHtml(marked.parse(fullText));
                 setChronoItems(prev => prev.map(item =>
                   item.id === textItemId
@@ -6267,6 +6271,12 @@
             seenDeltasRef.current.delete(localIdx);
             break; // skip normal finalization path
           }
+
+          // Clear the DOM text node before Preact re-render.  content_delta
+          // writes directly via el.textContent which orphans the node Preact
+          // tracks; without this clear, both the raw text and the markdown
+          // HTML render simultaneously (double-rendering bug).
+          if (domEl) domEl.textContent = '';
 
           setChronoItems(prev => prev.map(item => {
             if (item.id === textItemId) {
