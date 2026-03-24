@@ -1833,7 +1833,7 @@
       border-color: var(--shell-border);
       box-shadow: 0 0 8px var(--shell-glow);
       font-family: var(--shell-font);
-      padding-left: 28px;
+      padding-left: 32px;
     }
     .shell-mode #message-input:focus {
       border-color: var(--shell-border);
@@ -1841,16 +1841,23 @@
     .shell-mode .send-btn {
       background: var(--accent-green);
     }
-    .shell-mode .input-row {
+    .shell-prompt-wrap {
       position: relative;
+      flex: 1;
+      display: flex;
+      align-items: flex-end;
+    }
+    .shell-prompt-wrap #message-input {
+      flex: 1;
+      width: 100%;
     }
     .shell-prompt {
       position: absolute;
-      left: 56px;
-      top: 50%;
-      transform: translateY(-50%);
+      left: 12px;
+      bottom: 12px;
       font-family: var(--shell-font);
       font-size: 14px;
+      line-height: 1.4;
       color: var(--text-muted);
       pointer-events: none;
       z-index: 1;
@@ -5703,10 +5710,25 @@
           </div>
         `}
         <div class="input-row">
+          ${shellMode ? html`
+          <div class="shell-prompt-wrap">
+            <span class="shell-prompt">$</span>
+            <textarea
+              id="message-input"
+              ref=${textareaRef}
+              placeholder="command..."
+              rows="1"
+              style=${{ opacity: 1 }}
+              aria-label="Shell command input"
+              onInput=${handleInput}
+              onKeyDown=${handleKeyDown}
+            ></textarea>
+          </div>
+          ` : html`
           <textarea
             id="message-input"
             ref=${textareaRef}
-            placeholder=${shellMode ? "command..." : (shouldQueue ? "Queue a message…" : "Message… (/ for commands)")}
+            placeholder=${shouldQueue ? "Queue a message…" : "Message… (/ for commands)"}
             rows="1"
             style=${{ opacity: 1 }}
             aria-label="Message input"
@@ -5720,6 +5742,7 @@
             onDragOver=${e => e.preventDefault()}
             onDrop=${e => { e.preventDefault(); addImages(e.dataTransfer.files); }}
           ></textarea>
+          `}
           <button class="input-btn attach-btn" title="Attach image" onClick=${() => fileInputRef.current?.click()}>
             <${Icon} name="paperclip" />
           </button>
@@ -8512,11 +8535,34 @@
     // Shell mode: user-initiated command execution (! trigger)
     const handleShellExecute = useCallback(async (command) => {
       const key = activeKeyRef.current;
-      const activeSession = key ? sessionsRef.current.get(key) : null;
+      let activeSession = key ? sessionsRef.current.get(key) : null;
+      let sessionId = activeSession?.sessionId || null;
+
+      // Lazy session creation (same as sendMessage)
+      if (!sessionId) {
+        sessionId = await connect(key);
+        if (!sessionId) {
+          setChronoItems(prev => [...prev, {
+            id: makeId(), type: 'text', role: 'system',
+            content: 'Error: Could not create session.',
+            streaming: false, order: orderCounterRef.current++,
+          }]);
+          return;
+        }
+        activeSession = sessionsRef.current.get(activeKeyRef.current);
+      }
+
       const cwd = activeSession?.cwd || '~';
 
+      // Show the command as a user message in the chat
+      setChronoItems(prev => [...prev, {
+        id: makeId(), type: 'text', role: 'user',
+        content: '! ' + command,
+        streaming: false, order: orderCounterRef.current++,
+      }]);
+
       try {
-        const resp = await api.shellStream(activeSession?.sessionId || key, command, cwd);
+        const resp = await api.shellStream(sessionId, command, cwd);
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
