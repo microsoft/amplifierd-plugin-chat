@@ -1480,7 +1480,12 @@
       text-overflow: ellipsis;
     }
     .tool-arg-preview { color: var(--text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
-    .tool-body { padding: 8px 10px; border-top: 1px solid var(--border); }
+    .tool-body {
+      padding: 8px 10px;
+      border-top: 1px solid var(--border);
+      max-height: clamp(200px, 40vh, 500px);
+      overflow-y: auto;
+    }
     .tool-args-json { background: var(--bg-tertiary); padding: 6px 8px; border-radius: 4px; overflow-x: auto; white-space: pre; color: var(--text-secondary); font-family: monospace; font-size: 11px; }
     .tool-result-text {
       margin-top: 6px;
