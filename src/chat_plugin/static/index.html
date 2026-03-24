@@ -4217,7 +4217,7 @@
   }
 
   function ToolCallCard({ item, isActivity, subSessionsRef, subSessionRevision, onNavigateSession }) {
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(item.userInitiated === true);
     const statusIcon = getToolStatusIcon(item.toolStatus);
     const isRunning = item.toolStatus === 'running';
     const argPreview = getArgPreview(item.toolName, item.arguments || {});
@@ -8574,13 +8574,6 @@
       let cwd = activeSession?.cwd;
       if (!cwd || cwd === '~') cwd = activeSession?.serverCwd;
       if (!cwd || cwd === '~') cwd = getRequestedCwd();
-
-      // Show the command as a user message in the chat
-      setChronoItems(prev => [...prev, {
-        id: makeId(), type: 'text', role: 'user',
-        content: '! ' + command,
-        streaming: false, order: orderCounterRef.current++,
-      }]);
 
       try {
         const resp = await api.shellStream(sessionId, command, cwd);
