@@ -5502,6 +5502,11 @@
         setShellMode(true);
         setSlashOpen(false);
         setSlashActiveIndex(0);
+        // Re-focus after Preact swaps to the shell textarea
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current;
+          if (ta) ta.focus();
+        });
       } else if (!shellMode) {
         setSlashOpen(false);
         setSlashActiveIndex(0);
@@ -5717,7 +5722,7 @@
             <textarea
               id="message-input"
               ref=${textareaRef}
-              placeholder="command..."
+              placeholder="Run a shell command... (Esc to cancel)"
               rows="1"
               style=${{ opacity: 1 }}
               aria-label="Shell command input"
