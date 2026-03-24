@@ -428,6 +428,41 @@ def create_fork_routes(
     return router
 
 
+def create_shell_routes(session_manager: Any) -> APIRouter:
+    """User-initiated shell command execution via ! prefix."""
+    from starlette.responses import StreamingResponse
+
+    from chat_plugin.shell import execute_shell_command
+
+    router = APIRouter(prefix="/chat", tags=["chat-shell"])
+
+    @router.post("/api/sessions/{session_id}/shell")
+    async def execute_shell(session_id: str, body: dict):
+        command = body.get("command", "").strip()
+        if not command:
+            raise HTTPException(status_code=400, detail="Empty command")
+
+        cwd = (body.get("cwd") or "").strip()
+        if not cwd:
+            raise HTTPException(status_code=400, detail="cwd is required")
+
+        async def event_stream():
+            async for event in execute_shell_command(command, cwd=cwd):
+                yield event
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    return router
+
+
 def create_static_routes() -> APIRouter:
     router = APIRouter(tags=["chat-static"])
 

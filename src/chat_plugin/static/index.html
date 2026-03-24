@@ -29,6 +29,11 @@
       --action-btn-bg-active: rgba(255, 255, 255, 0.15);
       --action-btn-color: #b0b0b0;
       --action-btn-color-hover: #e8e8e8;
+
+      /* Shell mode tokens */
+      --shell-border: var(--accent-green);
+      --shell-glow: rgba(34, 197, 94, 0.15);
+      --shell-font: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
     
       /* Sub-session tokens */
       --sub-bg: rgba(255, 255, 255, 0.025);
@@ -64,6 +69,8 @@
       --action-btn-bg-active: rgba(0, 0, 0, 0.12);
       --action-btn-color: #64748b;
       --action-btn-color-hover: #0f172a;
+
+      --shell-glow: rgba(22, 163, 74, 0.1);
     
       --sub-bg: rgba(0, 0, 0, 0.025);
       --sub-bg-elevated: rgba(0, 0, 0, 0.035);
@@ -1451,6 +1458,12 @@
       font-variant-numeric: tabular-nums;
     }
     .token-usage-pill .tok-sep { color: var(--border); }
+    .tool-user-badge {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-left: 4px;
+      font-weight: 400;
+    }
     .tool-origin-badge {
       font-size: 10px;
       letter-spacing: 0.01em;
@@ -1467,7 +1480,12 @@
       text-overflow: ellipsis;
     }
     .tool-arg-preview { color: var(--text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
-    .tool-body { padding: 8px 10px; border-top: 1px solid var(--border); }
+    .tool-body {
+      padding: 8px 10px;
+      border-top: 1px solid var(--border);
+      max-height: clamp(200px, 40vh, 500px);
+      overflow-y: auto;
+    }
     .tool-args-json { background: var(--bg-tertiary); padding: 6px 8px; border-radius: 4px; overflow-x: auto; white-space: pre; color: var(--text-secondary); font-family: monospace; font-size: 11px; }
     .tool-result-text {
       margin-top: 6px;
@@ -1810,9 +1828,46 @@
       overflow-y: auto;
       outline: none;
       font-family: inherit;
+      transition: border-color 200ms ease-out, box-shadow 200ms ease-out, font-family 200ms ease-out, padding-left 200ms ease-out;
     }
     #message-input:focus { border-color: var(--accent-blue); }
     #message-input::placeholder { color: var(--text-muted); }
+
+    /* Shell mode input transformation */
+    .shell-mode #message-input {
+      border-color: var(--shell-border);
+      box-shadow: 0 0 8px var(--shell-glow);
+      font-family: var(--shell-font);
+      padding-left: 32px;
+    }
+    .shell-mode #message-input:focus {
+      border-color: var(--shell-border);
+    }
+    .shell-mode .send-btn {
+      background: var(--accent-green);
+    }
+    .shell-prompt-wrap {
+      position: relative;
+      flex: 1;
+      display: flex;
+      align-items: flex-end;
+    }
+    .shell-prompt-wrap #message-input {
+      flex: 1;
+      width: 100%;
+    }
+    .shell-prompt {
+      position: absolute;
+      left: 12px;
+      top: 0;
+      padding-top: 8px;
+      font-family: var(--shell-font);
+      font-size: 14px;
+      line-height: 1.4;
+      color: var(--text-muted);
+      pointer-events: none;
+      z-index: 1;
+    }
 
     .input-btn {
       min-height: 44px;
@@ -2611,6 +2666,18 @@
         throw new Error(err?.detail?.detail || err?.detail || `Execute failed: HTTP ${resp.status}`);
       }
       return resp.json();
+    },
+    async shellStream(sessionId, command, cwd) {
+      const resp = await fetch(`${API_BASE}/chat/api/sessions/${sessionId}/shell`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, cwd }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.detail || `Shell execution failed: HTTP ${resp.status}`);
+      }
+      return resp;
     },
     async cancelExecution(sessionId, immediate = false) {
       return fetch(`${API_BASE}/sessions/${sessionId}/cancel`, {
@@ -3848,6 +3915,8 @@
         return html`<svg class=${cls} viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="M6 6l12 12"></path></svg>`;
       case 'flask':
         return html`<svg class=${cls} viewBox="0 0 24 24"><path d="M9 3h6v7l4.5 7.5A2 2 0 0 1 17.77 21H6.23a2 2 0 0 1-1.73-3.5L9 10z"></path><path d="M9 3h6"></path></svg>`;
+      case 'terminal':
+        return html`<svg class=${cls} viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>`;
       default:
         return null;
     }
@@ -4155,7 +4224,7 @@
   }
 
   function ToolCallCard({ item, isActivity, subSessionsRef, subSessionRevision, onNavigateSession }) {
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(item.userInitiated === true);
     const statusIcon = getToolStatusIcon(item.toolStatus);
     const isRunning = item.toolStatus === 'running';
     const argPreview = getArgPreview(item.toolName, item.arguments || {});
@@ -4177,6 +4246,7 @@
         <div class="tool-header" onClick=${() => setExpanded(e => !e)}>
           <span class=${'tool-status' + (isRunning ? ' status-running' : '')}>${statusIcon}</span>
           <span class="tool-name">${item.toolName || 'tool'}</span>
+          ${item.userInitiated && html`<span class="tool-user-badge">(user)</span>`}
           ${originLabel && html`<span class="tool-origin-badge" title=${originTitle}>${originLabel}</span>`}
           <span class="tool-arg-preview">${argPreview}</span>
         </div>
@@ -5222,7 +5292,7 @@
     `;
   }
 
-  function InputArea({ onSend, onStop, onQueueMessage, executing, shouldQueue, viewMode, setViewMode, activeKey, labsVoice }) {
+  function InputArea({ onSend, onStop, onQueueMessage, onShellExecute, executing, shouldQueue, viewMode, setViewMode, activeKey, labsVoice, labsShell }) {
     const textareaRef = useRef(null);
     const fileInputRef = useRef(null);
     const [pendingImages, setPendingImages] = useState([]);
@@ -5238,6 +5308,7 @@
     const [sttReady, setSttReady] = useState(null); // null = unchecked, true = ready, false = needs download
     const [sttDownloading, setSttDownloading] = useState(false);
     const [showDownloadBanner, setShowDownloadBanner] = useState(false);
+    const [shellMode, setShellMode] = useState(false);
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
     const voiceTimerRef = useRef(null);
@@ -5337,6 +5408,18 @@
         return;
       }
 
+      // Shell mode: bypass AI, execute directly
+      if (shellMode) {
+        if (content && onShellExecute) {
+          onShellExecute(content);
+          ta.value = '';
+          ta.style.height = 'auto';
+          setShellMode(false);
+          setPendingImages([]);
+        }
+        return;
+      }
+
       // Normal send path
       const images = pendingImages.map(d => d.split(',')[1]);
       onSend(content, images);
@@ -5345,7 +5428,7 @@
       setPendingImages([]);
       draftsRef.current.delete(activeKey);
       setSlashOpen(false);
-    }, [onSend, onQueueMessage, pendingImages, shouldQueue, activeKey]);
+    }, [onSend, onQueueMessage, onShellExecute, pendingImages, shouldQueue, shellMode, activeKey]);
 
     const applySlashCommand = useCallback((cmdName) => {
       const ta = textareaRef.current;
@@ -5404,21 +5487,39 @@
       if (e.key === 'Escape') {
         setSlashOpen(false);
         setSlashActiveIndex(0);
+        if (shellMode) {
+          e.preventDefault();
+          setShellMode(false);
+          const ta = textareaRef.current;
+          if (ta) { ta.value = ''; ta.style.height = 'auto'; }
+        }
       }
     }, [doSend, slashMenuOpen, filteredCmds, activeSlashIndex, applySlashCommand]);
 
     const handleInput = useCallback((e) => {
       autoResize();
       const val = e.target.value;
-      if (val.startsWith('/')) {
+      if (!shellMode && val.startsWith('/')) {
         setSlashOpen(true);
         setSlashFilter(val.slice(1).toLowerCase());
         setSlashActiveIndex(0);
-      } else {
+      } else if (labsShell && !shellMode && val === '!') {
+        // '!' is a trigger to enter shell mode — consume it and clear
+        e.target.value = '';
+        setShellMode(true);
+        setSlashOpen(false);
+        setSlashActiveIndex(0);
+        // Re-focus after Preact swaps to the shell textarea
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current;
+          if (ta) ta.focus();
+        });
+      } else if (!shellMode) {
         setSlashOpen(false);
         setSlashActiveIndex(0);
       }
-    }, [autoResize]);
+      // In shell mode, no slash detection — just let user type freely
+    }, [autoResize, shellMode, labsShell]);
 
     const stopRecording = useCallback(() => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -5566,7 +5667,7 @@
     const fmtVoiceTime = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 
     return html`
-      <div id="input-area">
+      <div id="input-area" class=${shellMode ? 'shell-mode' : ''}>
         ${pendingImages.length > 0 && html`
           <div class="image-previews">
             ${pendingImages.map((src, i) => html`
@@ -5622,10 +5723,25 @@
           </div>
         `}
         <div class="input-row">
+          ${shellMode ? html`
+          <div class="shell-prompt-wrap">
+            <span class="shell-prompt">$</span>
+            <textarea
+              id="message-input"
+              ref=${textareaRef}
+              placeholder="Run a shell command... (Esc to cancel)"
+              rows="1"
+              style=${{ opacity: 1 }}
+              aria-label="Shell command input"
+              onInput=${handleInput}
+              onKeyDown=${handleKeyDown}
+            ></textarea>
+          </div>
+          ` : html`
           <textarea
             id="message-input"
             ref=${textareaRef}
-            placeholder=${shouldQueue ? "Queue a message…" : "Message… (/ for commands)"}
+            placeholder=${shouldQueue ? "Queue a message…" : `Message… (/ commands${labsShell ? ", ! shell" : ""})`}
             rows="1"
             style=${{ opacity: 1 }}
             aria-label="Message input"
@@ -5639,6 +5755,7 @@
             onDragOver=${e => e.preventDefault()}
             onDrop=${e => { e.preventDefault(); addImages(e.dataTransfer.files); }}
           ></textarea>
+          `}
           <button class="input-btn attach-btn" title="Attach image" onClick=${() => fileInputRef.current?.click()}>
             <${Icon} name="paperclip" />
           </button>
@@ -5653,7 +5770,7 @@
             <${Icon} name=${voiceState === 'transcribing' ? 'loader' : 'mic'} />
           </button>`}
           <button class="input-btn send-btn" onClick=${doSend}>
-            ${shouldQueue ? 'Queue' : 'Send'}
+            ${shellMode ? 'Run' : (shouldQueue ? 'Queue' : 'Send')}
           </button>
           ${executing && html`<button class="input-btn stop-btn" onClick=${onStop}>■ Stop</button>`}
         </div>
@@ -5957,7 +6074,7 @@
       const raw = localStorage.getItem(LABS_STORAGE_KEY);
       if (raw) return JSON.parse(raw);
     } catch {}
-    return { voice: false };
+    return { voice: false, shell: false };
   }
 
   function saveLabsState(state) {
@@ -6172,6 +6289,18 @@
             onToggle=${() => onToggleFeature('voice')}
             drawerOpen=${open}
           />
+          <div class=${'labs-feature-card' + (labsState.shell ? ' enabled' : '')}>
+            <div class="labs-feature-head">
+              <div class="labs-feature-icon">
+                <${Icon} name="terminal" />
+              </div>
+              <div class="labs-feature-info">
+                <h3>Shell Mode</h3>
+                <p>Type <code>!</code> to run shell commands directly from chat. Output streams inline.</p>
+              </div>
+              <${ToggleSwitch} on=${labsState.shell} onToggle=${() => onToggleFeature('shell')} />
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -8428,6 +8557,113 @@
       });
     }, [connect]);
 
+    // Shell mode: user-initiated command execution (! trigger)
+    const handleShellExecute = useCallback(async (command) => {
+      const key = activeKeyRef.current;
+      let activeSession = key ? sessionsRef.current.get(key) : null;
+      let sessionId = activeSession?.sessionId || null;
+
+      // Block shell on history sessions that haven't been resumed yet
+      if (sessionId && activeSession?.source === 'history') {
+        setChronoItems(prev => [...prev, {
+          id: makeId(), type: 'text', role: 'system',
+          content: 'Session is still loading. Please wait a moment and try again.',
+          streaming: false, order: orderCounterRef.current++,
+        }]);
+        return;
+      }
+
+      // Lazy session creation (same as sendMessage)
+      if (!sessionId) {
+        sessionId = await connect(key);
+        if (!sessionId) {
+          setChronoItems(prev => [...prev, {
+            id: makeId(), type: 'text', role: 'system',
+            content: 'Error: Could not create session.',
+            streaming: false, order: orderCounterRef.current++,
+          }]);
+          return;
+        }
+        activeSession = sessionsRef.current.get(activeKeyRef.current);
+      }
+
+      // CWD resolution: session metadata -> server-reported -> CWD picker value
+      // Avoid '~' from history sessions with missing metadata — prefer the
+      // user's configured default CWD from the picker in that case.
+      let cwd = activeSession?.cwd;
+      if (!cwd || cwd === '~') cwd = activeSession?.serverCwd;
+      if (!cwd || cwd === '~') cwd = getRequestedCwd();
+
+      try {
+        const resp = await api.shellStream(sessionId, command, cwd);
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentItem = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          let eventType = null;
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith('data: ') && eventType) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (eventType === 'tool:pre') {
+                  currentItem = {
+                    id: 'shell_' + Date.now(),
+                    type: 'tool_call',
+                    toolName: data.name,
+                    toolCallId: data.tool_call_id,
+                    arguments: data.arguments,
+                    toolStatus: 'running',
+                    result: '',
+                    userInitiated: true,
+                    streaming: true,
+                    order: orderCounterRef.current++,
+                  };
+                  setChronoItems(prev => [...prev, currentItem]);
+                } else if (eventType === 'tool:output' && currentItem) {
+                  currentItem = { ...currentItem, result: currentItem.result + data.partial_output };
+                  setChronoItems(prev =>
+                    prev.map(it => it.toolCallId === currentItem.toolCallId ? currentItem : it)
+                  );
+                } else if (eventType === 'tool:post' && currentItem) {
+                  currentItem = {
+                    ...currentItem,
+                    result: data.result,
+                    toolStatus: data.error ? 'error' : 'complete',
+                    resultError: data.error ? data.result : null,
+                    streaming: false,
+                  };
+                  setChronoItems(prev =>
+                    prev.map(it => it.toolCallId === currentItem.toolCallId ? currentItem : it)
+                  );
+                }
+              } catch (parseErr) {
+                console.warn('[shell] failed to parse SSE data:', parseErr);
+              }
+              eventType = null;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[shell] execution error:', err);
+        setChronoItems(prev => [...prev, {
+          id: makeId(), type: 'text', role: 'system',
+          content: 'Shell error: ' + (err?.message || 'Command execution failed'),
+          streaming: false, order: orderCounterRef.current++,
+        }]);
+      }
+    }, []);
+
     const stopExecution = useCallback(() => {
       const key = activeKeyRef.current;
       const activeSession = key ? sessionsRef.current.get(key) : null;
@@ -9872,7 +10108,9 @@
               onSend=${sendMessage}
               onStop=${stopExecution}
               onQueueMessage=${pushToQueue}
+              onShellExecute=${handleShellExecute}
               executing=${executing}
+              labsShell=${labsState.shell}
               shouldQueue=${executing || getQueueDrainState() === 'countdown' || (getQueueDrainState() === 'paused' && getQueue().length > 0)}
               viewMode=${viewMode}
               setViewMode=${setViewMode}

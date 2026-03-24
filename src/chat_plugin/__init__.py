@@ -21,6 +21,7 @@ def create_router(state: Any) -> APIRouter:
         create_fork_routes,
         create_history_routes,
         create_pin_routes,
+        create_shell_routes,
         create_static_routes,
     )
 
@@ -77,6 +78,7 @@ def create_router(state: Any) -> APIRouter:
     router.include_router(create_command_routes(processor))
     router.include_router(create_fork_routes(state.session_manager, projects_dir))
     router.include_router(create_feedback_routes(projects_dir, daemon_session_path))
+    router.include_router(create_shell_routes(state.session_manager))
     from chat_plugin.voice import create_voice_routes
 
     router.include_router(create_voice_routes())
