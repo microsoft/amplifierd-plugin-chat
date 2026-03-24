@@ -7866,14 +7866,31 @@
           // stopping at the direct parent) makes this generic for any depth.
           const directParentId = sessionParentByIdRef.current[eventSessionId];
           if (directParentId) {
-            let rootId = directParentId;
-            while (sessionParentByIdRef.current[rootId]) {
-              rootId = sessionParentByIdRef.current[rootId];
+            // User-initiated forks are independent root sessions even though
+            // they have a parent_id.  Only delegate sub-sessions should walk
+            // the parent chain to route events to their root ancestor.
+            let isFork = false;
+            for (const [, s] of sessionsRef.current) {
+              if (s.sessionId === eventSessionId) { isFork = !!s.forkedFromTurn; break; }
             }
-            for (const [key, session] of sessionsRef.current) {
-              if (session.sessionId === rootId) {
-                ownerKey = key;
-                break;
+            if (!isFork) {
+              let rootId = directParentId;
+              while (sessionParentByIdRef.current[rootId]) {
+                // Stop at fork boundaries — forked sessions are effective
+                // roots, so delegates within a fork route to the fork,
+                // not to the session the fork was originally created from.
+                let parentIsFork = false;
+                for (const [, s] of sessionsRef.current) {
+                  if (s.sessionId === rootId) { parentIsFork = !!s.forkedFromTurn; break; }
+                }
+                if (parentIsFork) break;
+                rootId = sessionParentByIdRef.current[rootId];
+              }
+              for (const [key, session] of sessionsRef.current) {
+                if (session.sessionId === rootId) {
+                  ownerKey = key;
+                  break;
+                }
               }
             }
           }
@@ -8765,7 +8782,9 @@
     }, []);
 
     const resumeHistorySession = useCallback((key) => {
-      const target = sessions.get(key);
+      // Fall back to sessionsRef when React state hasn't batched yet
+      // (same race condition as switchSession — see comment there).
+      const target = sessions.get(key) || sessionsRef.current.get(key);
       if (!target || !target.sessionId) return;
 
       if (transcriptFetchAbortRef.current) {
@@ -9050,7 +9069,10 @@
         transcriptFetchAbortRef.current = null;
       }
 
-      const target = sessions.get(key) || {};
+      // Fall back to sessionsRef (mutable ref) when React state hasn't
+      // batched yet — handleForkAtTurn writes to the ref synchronously
+      // before calling switchSession, but setSessions is async.
+      const target = sessions.get(key) || sessionsRef.current.get(key) || {};
 
       // Cancel any active countdown when switching away (must happen before any early return)
       cancelCountdown(currentKey);
