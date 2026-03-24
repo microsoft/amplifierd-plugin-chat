@@ -29,7 +29,7 @@ class TestTask3InputAreaSignature:
     def test_inputarea_signature_has_onqueuemessage(self, html_content):
         """InputArea function signature includes onQueueMessage prop (queueCount removed as unused)."""
         assert (
-            "function InputArea({ onSend, onStop, onQueueMessage, executing, shouldQueue, viewMode, setViewMode, activeKey })"
+            "function InputArea({ onSend, onStop, onQueueMessage, onShellExecute, executing, shouldQueue, viewMode, setViewMode, activeKey, labsVoice })"
             in html_content
         )
 
@@ -66,8 +66,8 @@ class TestTask4DoSendQueueRouting:
         assert "if (executing) return;" not in html_content
 
     def test_dosend_deps_include_shouldqueue_and_onqueuemessage(self, html_content):
-        """doSend useCallback deps include shouldQueue and onQueueMessage."""
-        assert "[onSend, onQueueMessage, pendingImages, shouldQueue]" in html_content
+        """doSend useCallback deps include shouldQueue, onQueueMessage, onShellExecute, shellMode, and activeKey."""
+        assert "[onSend, onQueueMessage, onShellExecute, pendingImages, shouldQueue, shellMode, activeKey]" in html_content
 
     def test_dosend_slash_commands_bypass_queue(self, html_content):
         """The comment about slash commands bypassing queue is present."""
@@ -106,8 +106,8 @@ class TestTask6SeparateButtons:
         assert '<button class="input-btn send-btn" onClick=${doSend}>' in html_content
 
     def test_send_button_label_is_queue_or_send(self, html_content):
-        """Send button label changes to 'Queue' when shouldQueue is true."""
-        assert "${shouldQueue ? 'Queue' : 'Send'}" in html_content
+        """Send button label changes to 'Run' in shell mode, or 'Queue'/'Send' otherwise."""
+        assert "${shellMode ? 'Run' : (shouldQueue ? 'Queue' : 'Send')}" in html_content
 
     def test_stop_button_conditional_on_executing(self, html_content):
         """Stop button is shown only when shouldQueue is true (not via ternary toggling Send off)."""
