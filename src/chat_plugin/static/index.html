@@ -6457,7 +6457,13 @@
     const AUTO_COLLAPSE_BP = 1080;
 
     // UI state
-    const [viewMode, setViewMode] = useState('chat');
+    const [viewMode, setViewMode] = useState(() => {
+      try {
+        const saved = localStorage.getItem('chat-view-mode');
+        if (saved === 'chat' || saved === 'workspace') return saved;
+      } catch {}
+      return 'chat';
+    });
     const [showSessions, setShowSessions] = useState(true);
     const [showActivity, setShowActivity] = useState(true);
     const activityAutoCollapsedRef = useRef(false);
@@ -6759,6 +6765,11 @@
         localStorage.setItem('chat-theme', theme);
       } catch {}
     }, [theme]);
+
+    // Persist view mode preference
+    useEffect(() => {
+      try { localStorage.setItem('chat-view-mode', viewMode); } catch {}
+    }, [viewMode]);
 
     // Mount shared feedback widget into header slot (once)
     useEffect(() => {
@@ -10072,6 +10083,17 @@
         <${StatusDot} status=${sseStatus} />
         <span class="app-name">Amplifier</span>
         <span class="header-spacer"></span>
+        <button
+          class=${'btn header-icon-btn split-toggle' + (viewMode === 'workspace' ? ' active' : '')}
+          title=${viewMode === 'workspace' ? 'Single column' : 'Split view'}
+          aria-label=${viewMode === 'workspace' ? 'Switch to single column view' : 'Switch to split view'}
+          onClick=${() => setViewMode(m => m === 'workspace' ? 'chat' : 'workspace')}
+        >
+          ${viewMode === 'workspace'
+            ? html`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="1.5"/></svg>`
+            : html`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="1.5"/><line x1="9" y1="2" x2="9" y2="14"/></svg>`
+          }
+        </button>
         <button class=${'btn header-icon-btn cmd-palette-trigger' + (fmtShortcut('Mod+k') ? ' has-hint' : '')} title=${'Actions (' + fmtShortcut('Mod+k') + ')'} onClick=${() => setCmdPaletteOpen(true)}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           <span class="cmd-palette-trigger-hint">${fmtShortcut('Mod+k')}</span>
