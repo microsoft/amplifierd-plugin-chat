@@ -9758,9 +9758,9 @@
           icon: _icons.plus, order: 10,
           handler: () => { newSession(); showToast('New session created'); },
         },
-        'filter-sessions': {
-          label: 'Filter Sessions', shortcut: 'App+f', category: 'Navigation',
-          icon: _icons.filter, order: 12,
+        'search-sessions': {
+          label: 'Search Sessions', shortcut: 'App+f', category: 'Navigation',
+          icon: _icons.search, order: 12,
           handler: () => { setShowSessions(true); setShowSessionFilter(true); },
         },
         'prev-session': {
@@ -9796,10 +9796,13 @@
             }
           },
         },
-        'toggle-sort': {
-          label: 'Toggle Session Sort', category: 'Navigation',
+        'cycle-group-mode': {
+          label: 'Cycle Session Grouping', category: 'Navigation',
           icon: _icons.sort, order: 15,
-          handler: () => setSessionSortMode(m => m === 'recent' ? 'directory' : 'recent'),
+          handler: () => setSessionGroupMode(m => {
+            const modes = ['none', 'project', 'activity', 'age'];
+            return modes[(modes.indexOf(m) + 1) % modes.length];
+          }),
         },
         'stop-execution': {
           label: 'Stop Execution', shortcut: 'Mod+.', category: 'Chat',
