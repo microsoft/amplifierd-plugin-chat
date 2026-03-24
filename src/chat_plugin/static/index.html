@@ -370,22 +370,29 @@
       border-color: var(--border);
       color: var(--text-muted);
     }
-    /* Group By dropdown */
+    /* Group By dropdown — matches session-control-btn appearance */
     .session-group-select {
       height: 26px;
       background: var(--bg-tertiary);
       color: var(--text-secondary);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0 6px;
+      padding: 0 20px 0 8px;
       font-size: 11px;
       font-family: inherit;
+      line-height: 1;
       cursor: pointer;
       outline: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 8 5' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 6px center;
     }
     .session-group-select:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
     .session-group-select:focus { border-color: var(--accent-blue); }
-    .session-group-select option { background: var(--bg-secondary); color: var(--text-primary);
+    .session-group-select option { background: var(--bg-secondary); color: var(--text-primary); text-align: left;
     }
     .session-control-value {
       color: var(--text-muted);
@@ -458,25 +465,31 @@
       letter-spacing: 0.02em;
       text-transform: uppercase;
     }
-    /* Always-visible session search bar (Option D) */
+    /* Always-visible session search bar */
     .session-search-bar {
       position: relative;
-      padding: 0 10px 8px;
+      padding: 0 10px 6px;
     }
     .session-search-icon {
       position: absolute;
       left: 18px;
-      top: 8px;
+      top: 50%;
+      transform: translateY(-50%);
       color: var(--text-muted);
       pointer-events: none;
     }
+    .session-search-bar:has(.session-search-hint) .session-search-icon {
+      top: 13px;
+      transform: none;
+    }
     .session-search-input {
       width: 100%;
-      background: var(--bg-tertiary);
+      height: 26px;
+      background: var(--bg-primary);
       border: 1px solid var(--border);
       color: var(--text-secondary);
-      font-size: 12px;
-      padding: 5px 8px 5px 28px;
+      font-size: 11px;
+      padding: 0 8px 0 27px;
       border-radius: 6px;
       outline: none;
       font-family: inherit;
@@ -485,9 +498,9 @@
       border-color: var(--accent-blue);
       color: var(--text-primary);
     }
-    .session-search-input::placeholder { color: var(--text-muted); }
+    .session-search-input::placeholder { color: var(--text-muted); font-size: 11px; }
     .session-search-hint {
-      margin-top: 3px;
+      margin-top: 2px;
       font-size: 10px;
       color: var(--text-muted);
       letter-spacing: 0.02em;
@@ -8499,6 +8512,8 @@
     // — Sub-session navigation —
     // Use a ref to access switchSession (defined later) without hook ordering issues
     // Server-side search with debounce
+    // Only depends on sessionFilterQuery — NOT sessions (which changes on every load/click
+    // and would re-trigger the search API). We use sessionsRef inside the callback instead.
     useEffect(() => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
       const query = sessionFilterQuery.trim();
@@ -8513,7 +8528,7 @@
           .then(data => {
             const rows = Array.isArray(data?.sessions) ? data.sessions : [];
             const loadedIds = new Set();
-            for (const [, s] of sessions.entries()) {
+            for (const [, s] of sessionsRef.current.entries()) {
               if (s && s.sessionId) loadedIds.add(s.sessionId);
             }
             setServerSearchResults(rows.filter(r => !loadedIds.has(r.session_id)));
@@ -8522,7 +8537,7 @@
           .finally(() => setServerSearching(false));
       }, 300);
       return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-    }, [sessionFilterQuery, sessions]);
+    }, [sessionFilterQuery]);
 
     const loadServerSearchResult = useCallback((s) => {
       const sessionId = s.session_id;
