@@ -394,3 +394,61 @@ def scan_session_revisions(
 
     rows.sort(key=lambda s: s["last_updated"], reverse=True)
     return rows
+
+
+def search_sessions(
+    projects_dir: Path | None,
+    query: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Search all sessions matching *query* against metadata fields.
+
+    Searches session name, description, CWD, session_id, and last_user_message.
+    Returns up to *limit* results sorted newest-first.
+    """
+    if projects_dir is None or not query.strip():
+        return []
+
+    query_lower = query.strip().lower()
+    all_entries = list(_iter_session_dirs(projects_dir))
+    if not all_entries:
+        return []
+
+    matches: list[tuple[str, dict[str, Any]]] = []
+    max_workers = min(8, len(all_entries))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_map = {
+            pool.submit(_read_session_meta, d, slug): (d, slug)
+            for d, slug in all_entries
+        }
+        for future in as_completed(future_map):
+            try:
+                meta = future.result()
+            except Exception:  # noqa: BLE001
+                continue
+
+            if meta.get("hidden"):
+                continue
+            if (meta.get("message_count") or 0) <= 0 and not meta.get(
+                "last_user_message"
+            ):
+                continue
+
+            haystack = " ".join(
+                str(v).lower()
+                for v in [
+                    meta.get("session_id"),
+                    meta.get("name"),
+                    meta.get("description"),
+                    meta.get("cwd"),
+                    meta.get("last_user_message"),
+                    meta.get("spawn_agent"),
+                ]
+                if v
+            )
+            if query_lower in haystack:
+                ts = meta.get("last_updated", "")
+                matches.append((ts, meta))
+
+    matches.sort(key=lambda t: t[0], reverse=True)
+    return [m[1] for m in matches[:limit]]

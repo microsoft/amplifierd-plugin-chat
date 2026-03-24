@@ -370,6 +370,23 @@
       border-color: var(--border);
       color: var(--text-muted);
     }
+    /* Group By dropdown */
+    .session-group-select {
+      height: 26px;
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0 6px;
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+    }
+    .session-group-select:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+    .session-group-select:focus { border-color: var(--accent-blue); }
+    .session-group-select option { background: var(--bg-secondary); color: var(--text-primary);
+    }
     .session-control-value {
       color: var(--text-muted);
       font-size: 10px;
@@ -482,7 +499,23 @@
     .session-card:hover { background: var(--bg-tertiary); }
     .session-card.active { border-left-color: var(--accent-blue); background: var(--bg-tertiary); }
 
-    .session-card-name { font-size: 12px; font-weight: 500; color: var(--text-primary); }
+    .session-card-name { font-size: 12px; font-weight: 500; color: var(--text-primary); display: flex; align-items: center; gap: 0; }
+    /* Session status dots */
+    .session-status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    .session-status-dot.dot-running { background: var(--accent-blue); animation: pulse-dot 1.5s ease-in-out infinite; }
+    .session-status-dot.dot-approval { background: var(--accent-amber, #f59e0b); }
+    .session-status-dot.dot-idle { background: #22c55e; }
+    .session-status-dot.dot-error { background: var(--accent-red); }
+    .session-status-dot.dot-connecting { background: var(--text-muted); animation: pulse-dot 1.5s ease-in-out infinite; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     .session-card-name.auto-named { color: var(--text-secondary); }
     .session-card-cwd { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .session-card-cwd-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -1976,6 +2009,13 @@
       z-index: 1;
       user-select: none;
     }
+    button.session-section-header {
+      cursor: pointer;
+      border: none;
+      width: 100%;
+      text-align: left;
+    }
+    button.session-section-header:hover { color: var(--text-primary); }
     .session-section-header .count {
       font-weight: 400;
       opacity: 0.7;
@@ -2718,6 +2758,10 @@
     },
     async listSessionHistory(limit = 200, offset = 0) {
       const resp = await fetch(`${API_BASE}/chat/api/sessions/history?limit=${limit}&offset=${offset}`);
+      return resp.json();
+    },
+    async searchSessions(query, limit = 20) {
+      const resp = await fetch(`${API_BASE}/chat/api/sessions/search?q=${encodeURIComponent(query)}&limit=${limit}`);
       return resp.json();
     },
     async getSessionRevisions(payload) {
@@ -4987,13 +5031,13 @@
     const [menuOpen, setMenuOpen] = useState(false);
     const inputRef = useRef(null);
     const originalNameRef = useRef('');
-    const statusIcon =
-      session.status === 'running' ? '⟳ ' :
-      session.status === 'connecting' ? '◌ ' :
-      session.status === 'loading_history' ? '◌ ' :
-      session.status === 'history' ? '◴ ' :
-      session.status === 'error' ? '✗ ' :
-      '';
+    const statusDotClass =
+      session.status === 'running' ? 'dot-running' :
+      session.pendingApproval ? 'dot-approval' :
+      session.status === 'error' ? 'dot-error' :
+      (session.status === 'connecting' || session.status === 'loading_history') ? 'dot-connecting' :
+      (session.status === 'idle' && session.source !== 'history' && (session.turnCount || 0) > 0) ? 'dot-idle' :
+      null;
     const metaText = session.source === 'history'
       ? `${session.messageCount || session.turnCount || 0} msgs`
       : `turn ${session.turnCount || 0}`;
@@ -5102,7 +5146,13 @@
       <div class=${'session-card' + (isActive ? ' active' : '') + (isEditing ? ' session-name-editing' : '') + (saved ? ' session-name-saved' : '')} data-session-id=${session.sessionId} onClick=${isEditing ? null : onClick} onKeyDown=${handleCardKeyDown} tabindex="0">
         <div class="session-card-name-row">
           <div class=${'session-card-name' + (!session.name ? ' auto-named' : '') + (shaking ? ' session-name-shake' : '')}>
-            ${statusIcon}
+            ${statusDotClass ? html`<span class=${'session-status-dot ' + statusDotClass} title=${
+              statusDotClass === 'dot-running' ? 'Agent working' :
+              statusDotClass === 'dot-approval' ? 'Needs your approval' :
+              statusDotClass === 'dot-idle' ? 'Waiting for your input' :
+              statusDotClass === 'dot-error' ? 'Error' :
+              'Connecting'
+            }></span>` : null}
             ${isEditing
               ? html`<input
                   ref=${inputRef}
@@ -6351,9 +6401,13 @@
     const [historyOffset, setHistoryOffset] = useState(0);
     const [loadingMoreHistory, setLoadingMoreHistory] = useState(false);
     const HISTORY_PAGE_SIZE = 100;
-    const [sessionSortMode, setSessionSortMode] = useState('recent');
+    const [sessionGroupMode, setSessionGroupMode] = useState('none');
+    const [pinnedCollapsed, setPinnedCollapsed] = useState(false);
     const [sessionFilterQuery, setSessionFilterQuery] = useState('');
     const [showSessionFilter, setShowSessionFilter] = useState(false);
+    const [serverSearchResults, setServerSearchResults] = useState([]);
+    const [serverSearching, setServerSearching] = useState(false);
+    const searchTimerRef = useRef(null);
     const [collapsedDirGroups, setCollapsedDirGroups] = useState({});
     const [collapsedSpawnGroups, setCollapsedSpawnGroups] = useState({});
     const [pinnedSessionIds, setPinnedSessionIds] = useState(new Set());
@@ -8319,7 +8373,7 @@
     }, [refreshHistory]);
 
     useEffect(() => {
-      if (sessionSortMode !== 'directory') return;
+      if (sessionGroupMode !== 'project') return;
       const groupKeys = new Set();
       const allEntries = Array.from(sessions.entries());
       const tree = buildSessionTree(allEntries);
@@ -8343,7 +8397,7 @@
         }
         return changed ? next : prev;
       });
-    }, [sessionSortMode, sessions]);
+    }, [sessionGroupMode, sessions]);
 
     useEffect(() => {
       const allEntries = Array.from(sessions.entries());
@@ -8409,6 +8463,67 @@
     // —— Send ————————————————————————————————————————————————————————
     // — Sub-session navigation —
     // Use a ref to access switchSession (defined later) without hook ordering issues
+    // Server-side search with debounce
+    useEffect(() => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      const query = sessionFilterQuery.trim();
+      if (!query || query.length < 2) {
+        setServerSearchResults([]);
+        setServerSearching(false);
+        return;
+      }
+      setServerSearching(true);
+      searchTimerRef.current = setTimeout(() => {
+        api.searchSessions(query)
+          .then(data => {
+            const rows = Array.isArray(data?.sessions) ? data.sessions : [];
+            const loadedIds = new Set();
+            for (const [, s] of sessions.entries()) {
+              if (s && s.sessionId) loadedIds.add(s.sessionId);
+            }
+            setServerSearchResults(rows.filter(r => !loadedIds.has(r.session_id)));
+          })
+          .catch(() => setServerSearchResults([]))
+          .finally(() => setServerSearching(false));
+      }, 300);
+      return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+    }, [sessionFilterQuery, sessions]);
+
+    const loadServerSearchResult = useCallback((s) => {
+      const sessionId = s.session_id;
+      const historyKey = 'history-' + sessionId;
+      setSessions(prev => {
+        if (prev.has(historyKey)) return prev;
+        const next = new Map(prev);
+        const parentSessionId = (typeof s.parent_session_id === 'string' && s.parent_session_id) || null;
+        const spawnAgent = (typeof s.spawn_agent === 'string' && s.spawn_agent) || null;
+        const forkedFromTurn = (typeof s.forked_from_turn === 'number' && s.forked_from_turn >= 1) ? s.forked_from_turn : null;
+        next.set(historyKey, {
+          source: 'history',
+          status: 'history',
+          sessionId,
+          cwd: s.cwd || '~',
+          turnCount: s.message_count || 0,
+          savedTurnCount: s.message_count || 0,
+          messageCount: s.message_count || 0,
+          lastUserMessage: s.last_user_message || null,
+          lastUpdated: s.last_updated || null,
+          name: s.name || null,
+          description: s.description || null,
+          knownRevision: null,
+          remoteRevision: null,
+          hasExternalUpdate: false,
+          isNewSession: false,
+          parentSessionId,
+          spawnAgent,
+          forkedFromTurn,
+        });
+        return next;
+      });
+      if (switchSessionRef.current) switchSessionRef.current(historyKey);
+      setServerSearchResults([]);
+    }, []);
+
     const switchSessionRef = useRef(null);
     const navigateToSession = useCallback((sessionId) => {
       if (!sessionId) return;
@@ -9341,6 +9456,49 @@
       });
       return groups;
     })();
+
+    const activityGroups = (() => {
+      const active = [], recent = [], older = [];
+      const oneDayAgo = Date.now() - 86400000;
+      for (const entry of rootSessionEntries) {
+        const [, session] = entry;
+        if (session && session.source !== 'history') {
+          active.push(entry);
+        } else {
+          const ts = sessionUpdatedTs(session);
+          if (ts > oneDayAgo) recent.push(entry);
+          else older.push(entry);
+        }
+      }
+      return [
+        { key: 'active', label: 'Active', items: active },
+        { key: 'recent-activity', label: 'Recent (24h)', items: recent },
+        { key: 'older-activity', label: 'Older', items: older },
+      ].filter(g => g.items.length > 0);
+    })();
+
+    const ageGroups = (() => {
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const weekStart = todayStart - (now.getDay() * 86400000);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      const today = [], thisWeek = [], thisMonth = [], olderAge = [];
+      for (const entry of rootSessionEntries) {
+        const [, session] = entry;
+        const ts = sessionUpdatedTs(session);
+        if (ts >= todayStart) today.push(entry);
+        else if (ts >= weekStart) thisWeek.push(entry);
+        else if (ts >= monthStart) thisMonth.push(entry);
+        else olderAge.push(entry);
+      }
+      return [
+        { key: 'today', label: 'Today', items: today },
+        { key: 'this-week', label: 'This Week', items: thisWeek },
+        { key: 'this-month', label: 'This Month', items: thisMonth },
+        { key: 'older-age', label: 'Older', items: olderAge },
+      ].filter(g => g.items.length > 0);
+    })();
+
     // Compute flat visual order of root session keys for keyboard navigation (Ctrl+[/])
     {
       const pinnedKeys = rootSessionEntries
@@ -9348,11 +9506,21 @@
         .map(([key]) => key);
       const pinnedSet = new Set(pinnedKeys);
       let orderedKeys;
-      if (sessionSortMode === 'directory') {
+      if (sessionGroupMode === 'project') {
         const dirKeys = directoryGroups.flatMap(g =>
           g.items.map(([key]) => key).filter(k => !pinnedSet.has(k))
         );
         orderedKeys = [...pinnedKeys, ...dirKeys];
+      } else if (sessionGroupMode === 'activity') {
+        const groupKeys = activityGroups.flatMap(g =>
+          g.items.map(([key]) => key).filter(k => !pinnedSet.has(k))
+        );
+        orderedKeys = [...pinnedKeys, ...groupKeys];
+      } else if (sessionGroupMode === 'age') {
+        const groupKeys = ageGroups.flatMap(g =>
+          g.items.map(([key]) => key).filter(k => !pinnedSet.has(k))
+        );
+        orderedKeys = [...pinnedKeys, ...groupKeys];
       } else {
         const unpinnedKeys = rootSessionEntries
           .filter(([, s]) => !s || !s.sessionId || !pinnedSessionIds.has(s.sessionId))
@@ -9885,19 +10053,20 @@
               </div>
             </div>
             <div class=${'session-panel-header-actions' + (showSyncButton ? ' has-sync' : '')}>
-              <button
-                class="session-control-btn"
-                title=${sessionSortMode === 'recent'
-                  ? 'Sorting by last updated time'
-                  : 'Sorting by working directory'}
-                onClick=${() => setSessionSortMode(mode => mode === 'recent' ? 'directory' : 'recent')}
+              <select
+                class="session-group-select"
+                value=${sessionGroupMode}
+                onChange=${e => setSessionGroupMode(e.target.value)}
+                title="Group sessions by"
               >
-                <span>Sort</span>
-                <span class="session-control-value">${sessionSortMode === 'recent' ? 'time' : 'dir'}</span>
-              </button>
+                <option value="none">Recent</option>
+                <option value="project">Project</option>
+                <option value="activity">Activity</option>
+                <option value="age">Age</option>
+              </select>
               <button
                 class=${'session-control-btn' + (isSessionFilterOpen ? ' active' : '')}
-                title="Show or hide session filter"
+                title="Search sessions"
                 onClick=${() => {
                   if (isSessionFilterOpen) {
                     setShowSessionFilter(false);
@@ -9907,7 +10076,7 @@
                   }
                 }}
               >
-                <span>Filter</span>
+                <span>Search</span>
               </button>
               ${showSyncButton && html`
                 <button
@@ -9929,7 +10098,7 @@
               <input
                 class="session-filter-input"
                 value=${sessionFilterQuery}
-                placeholder="Filter text or sid:abc123"
+                placeholder="Search sessions..."
                 spellcheck="false"
                 onInput=${e => setSessionFilterQuery(e.target.value)}
               />
@@ -9961,40 +10130,51 @@
               const unpinnedEntries = rootSessionEntries.filter(([key, s]) =>
                 !s || !s.sessionId || !pinnedSessionIds.has(s.sessionId)
               );
+
+              const renderGenericGroups = (groups) => html`
+                ${groups.map(group => {
+                  const collapsed = collapsedDirGroups[group.key] !== false;
+                  return html`
+                    <div class="session-dir-group" key=${'group-' + group.key}>
+                      <button
+                        class="session-dir-header"
+                        onClick=${() => toggleDirGroup(group.key)}
+                        title=${group.cwd || group.label}
+                      >
+                        <${Icon} name=${collapsed ? 'chevron-right' : 'chevron-down'} className="sm" />
+                        <span class="session-dir-title">${group.label || group.cwd}</span>
+                        <span class="session-dir-count">${group.items.length}</span>
+                      </button>
+                      ${!collapsed && html`
+                        <div class="session-dir-items">
+                          ${group.items.map(entry => renderSessionTreeEntry(entry))}
+                        </div>
+                      `}
+                    </div>
+                  `;
+                })}
+              `;
+
+              // Project groups: show basename as label, full path in tooltip
+              const projectGroups = directoryGroups.map(g => ({
+                ...g,
+                label: g.cwd === '~' ? '~' : g.cwd.split('/').filter(Boolean).pop() || g.cwd,
+              }));
+
               return html`
                 ${pinnedEntries.length > 0 && html`
-                  <div class="session-section-header">
+                  <button class="session-section-header" onClick=${() => setPinnedCollapsed(c => !c)}>
+                    <${Icon} name=${pinnedCollapsed ? 'chevron-right' : 'chevron-down'} className="sm" />
                     Pinned <span class="count">${pinnedEntries.length}</span>
-                  </div>
-                  ${pinnedEntries.map(entry => renderSessionTreeEntry(entry))}
+                  </button>
+                  ${!pinnedCollapsed && pinnedEntries.map(entry => renderSessionTreeEntry(entry))}
                 `}
-                ${sessionSortMode === 'directory'
-                  ? html`
-                      ${pinnedEntries.length > 0 && html`
-                        <div class="session-section-header">Directories</div>
-                      `}
-                      ${directoryGroups.map(group => {
-                        const collapsed = collapsedDirGroups[group.key] !== false;
-                        return html`
-                          <div class="session-dir-group" key=${'group-' + group.key}>
-                            <button
-                              class="session-dir-header"
-                              onClick=${() => toggleDirGroup(group.key)}
-                              title=${group.cwd}
-                            >
-                              <${Icon} name=${collapsed ? 'chevron-right' : 'chevron-down'} className="sm" />
-                              <span class="session-dir-title">${group.cwd}</span>
-                              <span class="session-dir-count">${group.items.length}</span>
-                            </button>
-                            ${!collapsed && html`
-                              <div class="session-dir-items">
-                                ${group.items.map(entry => renderSessionTreeEntry(entry))}
-                              </div>
-                            `}
-                          </div>
-                        `;
-                      })}
-                    `
+                ${sessionGroupMode === 'project'
+                  ? renderGenericGroups(projectGroups)
+                  : sessionGroupMode === 'activity'
+                  ? renderGenericGroups(activityGroups)
+                  : sessionGroupMode === 'age'
+                  ? renderGenericGroups(ageGroups)
                   : html`
                       ${pinnedEntries.length > 0 && unpinnedEntries.length > 0 && html`
                         <div class="session-section-header">Recent</div>
@@ -10002,6 +10182,31 @@
                       ${unpinnedEntries.map(entry => renderSessionTreeEntry(entry))}
                     `
                 }
+                ${serverSearchResults.length > 0 && html`
+                  <div class="session-section-header">More on disk</div>
+                  ${serverSearchResults.map(s => html`
+                    <div
+                      class="session-card"
+                      key=${'search-' + s.session_id}
+                      onClick=${() => loadServerSearchResult(s)}
+                      style="cursor: pointer;"
+                    >
+                      <div class="session-card-name-row">
+                        <div class="session-card-name auto-named">${s.name || 'session'}</div>
+                      </div>
+                      <div class="session-card-cwd session-card-cwd-row" title=${s.cwd || '~'}>
+                        <${Icon} name="folder" className="sm" />
+                        <span class="session-card-line-text">${s.cwd || '~'}</span>
+                      </div>
+                      <div class="session-card-meta">
+                        <span>${s.message_count || 0} msgs</span>
+                      </div>
+                    </div>
+                  `)}
+                `}
+                ${serverSearching && html`
+                  <div class="session-list-loading"><span>Searching disk...</span></div>
+                `}
                 ${hasMoreHistory && html`
                   <button
                     class="session-load-more"
