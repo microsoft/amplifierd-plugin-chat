@@ -331,13 +331,9 @@
       letter-spacing: 0.05em;
     }
     .session-panel-header-actions {
-      display: grid;
-      grid-template-columns: 1fr;
+      display: flex;
       align-items: center;
       gap: 6px;
-    }
-    .session-panel-header-actions.has-sync {
-      grid-template-columns: 1fr auto;
     }
     .session-control-btn {
       min-width: 0;
@@ -370,29 +366,75 @@
       border-color: var(--border);
       color: var(--text-muted);
     }
-    /* Group By dropdown — matches session-control-btn appearance */
-    .session-group-select {
-      height: 26px;
-      background: var(--bg-tertiary);
-      color: var(--text-secondary);
+    /* Integrated search bar with group pill */
+    .session-integrated-search {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 1;
+      min-width: 0;
+      height: 28px;
+      background: var(--bg-primary);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0 20px 0 8px;
+      overflow: hidden;
+    }
+    .session-integrated-search:focus-within { border-color: var(--accent-blue); }
+    .session-integrated-search .search-icon {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+      flex-shrink: 0;
+    }
+    .session-integrated-search input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
       font-size: 11px;
-      font-family: inherit;
-      line-height: 1;
-      cursor: pointer;
+      padding: 0 4px 0 28px;
       outline: none;
+      font-family: inherit;
+    }
+    .session-integrated-search input:focus { color: var(--text-primary); }
+    .session-integrated-search input::placeholder { color: var(--text-muted); }
+    /* Group pill inside search bar */
+    .session-group-pill {
+      position: relative;
+      flex-shrink: 0;
+      height: 20px;
+      margin-right: 4px;
+      padding: 0 14px 0 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+      font-size: 10px;
+      font-family: inherit;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
       -webkit-appearance: none;
       -moz-appearance: none;
       appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 8 5' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg width='7' height='4' viewBox='0 0 7 4' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M.5.5l3 3 3-3' stroke='%236b7280' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
-      background-position: right 6px center;
+      background-position: right 4px center;
     }
-    .session-group-select:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
-    .session-group-select:focus { border-color: var(--accent-blue); }
-    .session-group-select option { background: var(--bg-secondary); color: var(--text-primary); text-align: left;
+    .session-group-pill:hover { border-color: var(--text-muted); color: var(--text-secondary); }
+    .session-group-pill:focus { border-color: var(--accent-blue); outline: none; }
+    .session-group-pill option { background: var(--bg-secondary); color: var(--text-primary); text-align: left; }
+    /* Highlight pill when non-default group is active */
+    .session-group-pill.active-group {
+      border-color: rgba(59, 130, 246, 0.4);
+      color: var(--accent-blue);
+      background-color: rgba(59, 130, 246, 0.08);
     }
     .session-control-value {
       color: var(--text-muted);
@@ -465,46 +507,12 @@
       letter-spacing: 0.02em;
       text-transform: uppercase;
     }
-    /* Always-visible session search bar */
-    .session-search-bar {
-      position: relative;
-      padding: 0 10px 6px;
-    }
-    .session-search-icon {
-      position: absolute;
-      left: 18px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--text-muted);
-      pointer-events: none;
-    }
-    .session-search-bar:has(.session-search-hint) .session-search-icon {
-      top: 13px;
-      transform: none;
-    }
-    .session-search-input {
-      width: 100%;
-      height: 26px;
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      color: var(--text-secondary);
-      font-size: 11px;
-      padding: 0 8px 0 27px;
-      border-radius: 6px;
-      outline: none;
-      font-family: inherit;
-    }
-    .session-search-input:focus {
-      border-color: var(--accent-blue);
-      color: var(--text-primary);
-    }
-    .session-search-input::placeholder { color: var(--text-muted); font-size: 11px; }
     .session-search-hint {
-      margin-top: 2px;
       font-size: 10px;
       color: var(--text-muted);
       letter-spacing: 0.02em;
       text-align: right;
+      padding: 2px 10px 0;
     }
 
     .session-list { flex: 1; overflow-y: auto; padding: 8px 0; }
@@ -8539,15 +8547,31 @@
       return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
     }, [sessionFilterQuery]);
 
+    // Pending switch target: set by loadServerSearchResult, consumed by useEffect
+    // after sessions Map has updated with the new entry.
+    const pendingSearchSwitchRef = useRef(null);
+
     const loadServerSearchResult = useCallback((s) => {
       const sessionId = s.session_id;
       const historyKey = 'history-' + sessionId;
+
+      // Remove only this result from the server results (keep others visible)
+      setServerSearchResults(prev => prev.filter(r => r.session_id !== sessionId));
+
+      // If already loaded, just switch to it
+      if (sessionsRef.current.has(historyKey)) {
+        if (switchSessionRef.current) switchSessionRef.current(historyKey);
+        return;
+      }
+
+      // Add session to Map and schedule switch after render
+      pendingSearchSwitchRef.current = historyKey;
+      const parentSessionId = (typeof s.parent_session_id === 'string' && s.parent_session_id) || null;
+      const spawnAgent = (typeof s.spawn_agent === 'string' && s.spawn_agent) || null;
+      const forkedFromTurn = (typeof s.forked_from_turn === 'number' && s.forked_from_turn >= 1) ? s.forked_from_turn : null;
       setSessions(prev => {
         if (prev.has(historyKey)) return prev;
         const next = new Map(prev);
-        const parentSessionId = (typeof s.parent_session_id === 'string' && s.parent_session_id) || null;
-        const spawnAgent = (typeof s.spawn_agent === 'string' && s.spawn_agent) || null;
-        const forkedFromTurn = (typeof s.forked_from_turn === 'number' && s.forked_from_turn >= 1) ? s.forked_from_turn : null;
         next.set(historyKey, {
           source: 'history',
           status: 'history',
@@ -8570,9 +8594,17 @@
         });
         return next;
       });
-      if (switchSessionRef.current) switchSessionRef.current(historyKey);
-      setServerSearchResults([]);
     }, []);
+
+    // Switch to the pending search result after sessions Map has updated
+    useEffect(() => {
+      const key = pendingSearchSwitchRef.current;
+      if (!key) return;
+      if (sessions.has(key)) {
+        pendingSearchSwitchRef.current = null;
+        if (switchSessionRef.current) switchSessionRef.current(key);
+      }
+    }, [sessions]);
 
     const switchSessionRef = useRef(null);
     const navigateToSession = useCallback((sessionId) => {
@@ -10111,18 +10143,28 @@
                 >x</button>
               </div>
             </div>
-            <div class=${'session-panel-header-actions' + (showSyncButton ? ' has-sync' : '')}>
-              <select
-                class="session-group-select"
-                value=${sessionGroupMode}
-                onChange=${e => setSessionGroupMode(e.target.value)}
-                title="Group sessions by"
-              >
-                <option value="none">Recent</option>
-                <option value="project">Project</option>
-                <option value="activity">Activity</option>
-                <option value="age">Age</option>
-              </select>
+            <div class="session-panel-header-actions">
+              <div class="session-integrated-search">
+                <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input
+                  id="session-search-input"
+                  value=${sessionFilterQuery}
+                  placeholder="Search sessions..."
+                  spellcheck="false"
+                  onInput=${e => setSessionFilterQuery(e.target.value)}
+                />
+                <select
+                  class=${'session-group-pill' + (sessionGroupMode !== 'none' ? ' active-group' : '')}
+                  value=${sessionGroupMode}
+                  onChange=${e => setSessionGroupMode(e.target.value)}
+                  title="Group sessions by"
+                >
+                  <option value="none">Recent</option>
+                  <option value="project">Project</option>
+                  <option value="activity">Activity</option>
+                  <option value="age">Age</option>
+                </select>
+              </div>
               ${showSyncButton && html`
                 <button
                   class=${'session-control-btn' + (pendingHistorySyncCount > 0 ? ' active' : '')}
@@ -10133,28 +10175,16 @@
                   disabled=${syncingHistory}
                 >
                   <${Icon} name="refresh" className=${syncingHistory ? 'sm status-running' : 'sm'} />
-                  <span>${syncingHistory ? 'Syncing' : 'Sync'}</span>
                 </button>
               `}
             </div>
-            <div class="session-search-bar">
-              <svg class="session-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input
-                id="session-search-input"
-                class="session-search-input"
-                value=${sessionFilterQuery}
-                placeholder="Search sessions..."
-                spellcheck="false"
-                onInput=${e => setSessionFilterQuery(e.target.value)}
-              />
-              ${hasSessionFilter && html`
-                <div class="session-search-hint">
-                  ${hasSessionResults
-                    ? (filteredSessionEntries.length + ' match' + (filteredSessionEntries.length === 1 ? '' : 'es'))
-                    : 'No matches'}
-                </div>
-              `}
-            </div>
+            ${hasSessionFilter && html`
+              <div class="session-search-hint">
+                ${hasSessionResults
+                  ? (filteredSessionEntries.length + ' match' + (filteredSessionEntries.length === 1 ? '' : 'es'))
+                  : 'No matches'}
+              </div>
+            `}
           </div>
           <div class="session-list">
             ${historyListLoading && html`
