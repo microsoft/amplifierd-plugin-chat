@@ -5726,14 +5726,18 @@
         if (!needsShift && e.shiftKey) continue;
         if (needsAlt && !e.altKey) continue;
         if (!needsAlt && !needsApp && e.altKey) continue;
+        // Match by e.code first (physical key, unaffected by modifiers), then e.key
+        const code = e.code;
         const eKey = e.key.length === 1 ? e.key.toLowerCase() : e.key;
         const target = key.toLowerCase();
-        if (eKey === target || e.code === 'Key' + key.toUpperCase() || e.code === 'Digit' + key
-          || (key === '[' && (e.key === '[' || e.code === 'BracketLeft'))
-          || (key === ']' && (e.key === ']' || e.code === 'BracketRight'))
-          || (key === '.' && e.key === '.')
-          || (key === '/' && (e.key === '/' || e.code === 'Slash'))
-        ) return action;
+        const matched = eKey === target
+          || code === 'Key' + key.toUpperCase()
+          || code === 'Digit' + key
+          || (key === '[' && code === 'BracketLeft')
+          || (key === ']' && code === 'BracketRight')
+          || (key === '.' && (code === 'Period' || e.key === '.'))
+          || (key === '/' && (code === 'Slash' || e.key === '/'));
+        if (matched) return action;
       }
       return null;
     }
@@ -5770,9 +5774,11 @@
       function handler(e) {
         const tag = e.target?.tagName;
         const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable;
+        // Always let Mod+K and Escape through; also let App-modified keys through
+        // (Ctrl on Mac / Alt on Win are never used for typing in inputs)
+        const hasAppMod = e[APP_KEY];
         const isModK = e[MOD_KEY] && e.key.toLowerCase() === 'k';
-        const isEscape = e.key === 'Escape';
-        if (isInput && !isModK && !isEscape) return;
+        if (isInput && !isModK && !hasAppMod && e.key !== 'Escape') return;
         if (isOpen) return;
         const action = registry.matchShortcut(e);
         if (action && (!action.when || action.when(ctxRef.current))) {
