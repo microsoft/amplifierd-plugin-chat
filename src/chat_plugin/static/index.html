@@ -8552,7 +8552,7 @@
         activeSession = sessionsRef.current.get(activeKeyRef.current);
       }
 
-      const cwd = activeSession?.cwd || '~';
+      const cwd = activeSession?.cwd || activeSession?.serverCwd || getRequestedCwd();
 
       // Show the command as a user message in the chat
       setChronoItems(prev => [...prev, {
