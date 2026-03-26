@@ -2737,7 +2737,7 @@
 <script src="./feedback-widget.js"></script>
 <script>
   const { h, render } = window.preact;
-  const { useState, useRef, useEffect, useCallback, useMemo } = window.preactHooks;
+  const { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } = window.preactHooks;
   const { html } = window;
   const { marked } = window;
 
@@ -4799,8 +4799,21 @@
       ) ? prev : { canTop, canBottom, hasOverflow });
     }, []);
 
-    useEffect(() => {
-      initialAnchorDoneRef.current = false;
+    // Use useLayoutEffect so the scroll-to-bottom fires synchronously after
+    // Preact commits the DOM but BEFORE the browser paints. Without this,
+    // switching sessions briefly shows the top of the conversation (the first
+    // long message) for ~32ms (two rAF frames) before the scroll anchor fires.
+    useLayoutEffect(() => {
+      const el = listRef.current;
+      if (el) {
+        // Scroll to bottom immediately — user never sees the top of the thread
+        el.scrollTop = el.scrollHeight;
+        // Mark anchor done so the [sorted.length] effect skips the double-rAF
+        initialAnchorDoneRef.current = true;
+      } else {
+        // No DOM yet (initial mount) — let the [sorted.length] effect handle it
+        initialAnchorDoneRef.current = false;
+      }
       nearBottomRef.current = true;
       lastNoticeSignalRef.current = bottomNoticeSignal;
       setShowBottomNotice(false);
@@ -9407,6 +9420,21 @@
       // E2: finalize any in-flight synthetic animations with proper content
       finalizeSyntheticAnimations();
       seenDeltasRef.current.clear();
+
+      // E2: Re-synchronize seenDeltasRef with restored items. When the user
+      // switches away mid-stream, content_delta events are processed live
+      // (not queued), so seenDeltasRef accumulates their indices. The .clear()
+      // above wipes that state. Without this re-population, a replayed
+      // content_end event would see an empty seenDeltasRef and incorrectly
+      // trigger a synthetic typing animation for content that was already
+      // streamed. We pre-populate for any text block whose item already has
+      // content, so content_end takes the normal finalization path instead.
+      for (const [bKey, bItemId] of Object.entries(blockMapRef.current)) {
+        if (!bKey.startsWith('id-')) continue;
+        const bIdx = parseInt(bKey.slice(3), 10);
+        const bItem = targetItems.find(i => i.id === bItemId);
+        if (bItem && bItem.content) seenDeltasRef.current.add(bIdx);
+      }
 
       // Strip the thinking placeholder that was saved when we switched away.
       // The replay will re-create thinking items from actual content_block:start events.
