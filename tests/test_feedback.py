@@ -141,6 +141,54 @@ def test_analyze_rejects_invalid_body():
 # ---------------------------------------------------------------------------
 
 
+def test_analyze_uses_loopback_not_host_header(tmp_path):
+    """SSRF guard: base_url passed to helpers must NOT reflect the Host header.
+
+    S-25: The loopback URL passed to _create_analysis_session must always be
+    127.0.0.1 (the socket bind address), never a value from the client-controlled
+    Host header.  Current behaviour: request.base_url reflects the Host header,
+    so a spoofed Host causes the daemon to connect to an attacker-controlled host.
+    """
+    # Set up a session with a transcript
+    sess_dir = tmp_path / "-Users-test" / "sessions" / "sess-001"
+    sess_dir.mkdir(parents=True)
+    (sess_dir / "transcript.jsonl").write_text(
+        json.dumps({"role": "user", "content": "hello"}) + "\n"
+    )
+
+    from chat_plugin.feedback import create_feedback_routes
+
+    app = FastAPI()
+    router = create_feedback_routes(tmp_path, None)
+    app.include_router(router)
+    client = TestClient(app)
+
+    mock_create = AsyncMock(return_value="analysis-sess-001")
+    mock_hide = AsyncMock()
+    mock_kick = AsyncMock()
+
+    with (
+        patch("chat_plugin.feedback._create_analysis_session", mock_create),
+        patch("chat_plugin.feedback._mark_session_hidden", mock_hide),
+        patch("chat_plugin.feedback._kick_off_execution", mock_kick),
+    ):
+        resp = client.post(
+            "/chat/api/feedback/analyze",
+            json={"session_id": "sess-001"},
+            headers={"Host": "evil.com:9999"},
+        )
+
+    assert resp.status_code == 200
+
+    actual_base_url: str = mock_create.call_args[0][0]
+    assert "evil.com" not in actual_base_url, (
+        f"SSRF: base_url '{actual_base_url}' must not reflect the spoofed Host header"
+    )
+    assert "127.0.0.1" in actual_base_url, (
+        f"base_url '{actual_base_url}' must always use the loopback address 127.0.0.1"
+    )
+
+
 @pytest.mark.asyncio
 async def test_safe_kick_off_logs_on_failure(caplog):
     """_safe_kick_off logs via logger.exception when _kick_off_execution raises."""
