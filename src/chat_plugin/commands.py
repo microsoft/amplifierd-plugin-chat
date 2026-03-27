@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,9 +64,7 @@ class CommandProcessor:
         return handler(args, session_id=session_id)
 
     @staticmethod
-    def _patch_forked_metadata(
-        forked_dir: Path, parent_dir: Path, handle: Any
-    ) -> None:
+    def _patch_forked_metadata(forked_dir: Path, parent_dir: Path, handle: Any) -> None:
         """Patch forked session's metadata with working_dir and any fields
         that fork_session() left as null (e.g. bundle, model)."""
         import json
@@ -160,7 +161,9 @@ class CommandProcessor:
             ctx = handle.session.coordinator.get("context")
             ctx.clear()
         except Exception:
-            pass  # best effort
+            logger.warning(
+                "Could not clear context for session %s", session_id, exc_info=True
+            )
         # B1: Flatten
         return {"type": "cleared", "session_id": session_id}
 
@@ -178,6 +181,7 @@ class CommandProcessor:
                 for name, tool in tools.items()
             ]
         except Exception:
+            logger.exception("Failed to list tools for session %s", session_id)
             tool_list = []
         # B1: Flatten — frontend reads result.tools directly
         return {"type": "tools", "tools": tool_list}
@@ -202,6 +206,7 @@ class CommandProcessor:
             else:
                 agent_list = [{"name": str(a), "description": ""} for a in agents_cfg]
         except Exception:
+            logger.exception("Failed to list agents for session %s", session_id)
             agent_list = []
         # B1: Flatten — frontend reads result.agents directly
         return {"type": "agents", "agents": agent_list}
@@ -214,6 +219,7 @@ class CommandProcessor:
             config = handle.session.coordinator.config
             cfg = dict(config)
         except Exception:
+            logger.exception("Failed to read config for session %s", session_id)
             cfg = {}
 
         # B1: Map raw coordinator config to the shape formatCommandResult expects:
@@ -302,6 +308,7 @@ class CommandProcessor:
                 ],
             }
         except Exception:
+            logger.exception("Failed to list modes for session %s", session_id)
             return {"type": "modes", "modes": [], "active_mode": None}
 
     def _cmd_mode(self, args: list[str], *, session_id: str | None = None) -> dict:

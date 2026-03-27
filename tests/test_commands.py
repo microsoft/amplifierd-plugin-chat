@@ -274,6 +274,23 @@ def test_bundle_command_coming_soon(processor):
     assert "coming soon" in result["message"].lower()
 
 
+def test_tools_command_logs_exception_on_failure(processor_with_mock_session, caplog):
+    """S-24: Command handlers must log exceptions, not swallow silently."""
+    import logging
+
+    # Make coordinator.get("tools") raise
+    processor_with_mock_session._session_manager.get.return_value.session.coordinator.get.side_effect = RuntimeError(
+        "kaboom"
+    )
+    with caplog.at_level(logging.ERROR, logger="chat_plugin.commands"):
+        processor_with_mock_session.handle_command("tools", [], session_id="abc")
+
+    assert any(
+        "Failed to list tools" in r.message and r.exc_info is not None
+        for r in caplog.records
+    ), "Expected the exception to be logged via logger.exception()"
+
+
 def test_bundle_command_in_commands_list(processor):
     """B4: /bundle appears in the /help listing."""
     result = processor.handle_command("help", [], session_id=None)
