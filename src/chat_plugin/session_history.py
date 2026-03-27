@@ -287,10 +287,6 @@ def scan_sessions(
         pinned_ids: Set of session IDs that should be returned as pinned,
             outside the normal pagination window. Defaults to empty set.
 
-    If *ensure_ids* is provided, any session IDs in that set that fall outside
-    the pagination window are appended so they are always returned (e.g. pinned
-    sessions whose mtime has drifted past the page boundary).
-
     Returns:
         (regular_results, pinned_results, total_count) where *regular_results*
         is the paginated page of non-pinned sessions (sorted newest-first),
