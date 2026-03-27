@@ -195,8 +195,12 @@ async def test_safe_kick_off_logs_on_failure(caplog):
     from chat_plugin.feedback import _safe_kick_off
 
     mock_kick = AsyncMock(side_effect=RuntimeError("connection refused"))
+    mock_hide = AsyncMock()
 
-    with patch("chat_plugin.feedback._kick_off_execution", mock_kick):
+    with (
+        patch("chat_plugin.feedback._kick_off_execution", mock_kick),
+        patch("chat_plugin.feedback._mark_session_hidden", mock_hide),
+    ):
         with caplog.at_level("ERROR", logger="chat_plugin.feedback"):
             await _safe_kick_off("http://localhost:8080", "sess-fail", "prompt")
 

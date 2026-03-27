@@ -214,8 +214,17 @@ async def _kick_off_execution(base_url: str, session_id: str, prompt: str) -> No
 
 
 async def _safe_kick_off(base_url: str, session_id: str, prompt: str) -> None:
-    """Wrap _kick_off_execution with logging so failures aren't silent."""
+    """Wrap _kick_off_execution with logging so failures aren't silent.
+
+    Also marks the session as hidden. This runs in a background task
+    where the session dir reliably exists (created by the daemon after
+    POST /sessions returns). Brief visibility window (~one poll cycle)
+    between session creation and this task running is acceptable —
+    the previous location raced with directory creation, causing 404s
+    that left sessions permanently visible.
+    """
     try:
+        await _mark_session_hidden(base_url, session_id)
         await _kick_off_execution(base_url, session_id, prompt)
     except Exception:
         logger.exception(
@@ -288,7 +297,8 @@ def create_feedback_routes(
 
         # Create a new analysis session and mark it hidden
         analysis_session_id = await _create_analysis_session(base_url)
-        await _mark_session_hidden(base_url, analysis_session_id)
+        # _mark_session_hidden is now called inside _safe_kick_off where
+        # the session dir reliably exists on disk. See S-17.
 
         # Build the prompt and kick off execution in the background
         prompt = _build_analysis_prompt(
