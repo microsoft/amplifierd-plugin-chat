@@ -3200,10 +3200,11 @@
       grep: 'pattern', glob: 'pattern',
       web_search: 'query', web_fetch: 'url',
       delegate: 'agent', task: 'agent',
+      recipes: 'operation',
     }[toolName];
     if (field && args[field]) return String(args[field]).slice(0, 60);
     const firstVal = Object.values(args || {})[0];
-    return firstVal ? String(firstVal).slice(0, 60) : '';
+    return firstVal ? String(typeof firstVal === 'object' ? JSON.stringify(firstVal) : firstVal).slice(0, 60) : '';
   }
 
   /**
@@ -3526,28 +3527,32 @@
     return haystack.includes(query);
   }
 
-  // Simple HTML sanitizer — strips dangerous tags and event handlers
-  // TODO: Replace with DOMPurify in vendor.js for production use
-  function sanitizeHtml(html) {
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    // Remove dangerous tags including style, base, meta, form
-    const dangerous = div.querySelectorAll('script,iframe,object,embed,link,style,meta,base,form');
-    dangerous.forEach(el => el.remove());
-    // Remove dangerous attributes (event handlers, unsafe URLs)
-    const UNSAFE_ATTRS = ['src', 'href', 'action', 'formaction', 'data', 'xlink:href'];
-    const UNSAFE_PROTO = /^\s*(javascript|data|vbscript):/i;  // \s* handles whitespace bypass
-    const allEls = div.querySelectorAll('*');
-    allEls.forEach(el => {
-      Array.from(el.attributes).forEach(attr => {
-        if (attr.name.startsWith('on') ||
-            (UNSAFE_ATTRS.includes(attr.name) && UNSAFE_PROTO.test(attr.value))) {
-          el.removeAttribute(attr.name);
-        }
+  // HTML sanitizer — uses DOMPurify when available (loaded via vendor.js),
+  // falls back to a basic strip for dev/offline use.
+  const sanitizeHtml = (() => {
+    if (typeof DOMPurify !== 'undefined') {
+      return (html) => DOMPurify.sanitize(html);
+    }
+    // Fallback: strip dangerous tags and event handlers
+    console.warn('[chat] DOMPurify not loaded — using basic HTML sanitizer. Rebuild vendor.js to fix.');
+    return (html) => {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      const dangerous = div.querySelectorAll('script,iframe,object,embed,link,style,meta,base,form');
+      dangerous.forEach(el => el.remove());
+      const UNSAFE_ATTRS = ['src', 'href', 'action', 'formaction', 'data', 'xlink:href'];
+      const UNSAFE_PROTO = /^\s*(javascript|data|vbscript):/i;
+      div.querySelectorAll('*').forEach(el => {
+        Array.from(el.attributes).forEach(attr => {
+          if (attr.name.startsWith('on') ||
+              (UNSAFE_ATTRS.includes(attr.name) && UNSAFE_PROTO.test(attr.value))) {
+            el.removeAttribute(attr.name);
+          }
+        });
       });
-    });
-    return div.innerHTML;
-  }
+      return div.innerHTML;
+    };
+  })();
 
   function transcriptToChronoItems(transcript) {
     const items = [];
@@ -6599,6 +6604,8 @@
       subSessionsRef.current = new Map();
       subBlockMapRef.current = new Map();
       subNextIndexRef.current = new Map();
+      childToToolRef.current = {};
+      childAgentRef.current = {};
       if (subSessionRafRef.current) { cancelAnimationFrame(subSessionRafRef.current); subSessionRafRef.current = null; }
     }
 
@@ -7370,9 +7377,13 @@
                 subNextIndexRef.current.set(subKey, subIdx + 1);
                 const blockMap = subBlockMapRef.current.get(subKey);
                 if (blockMap) blockMap.set('thinking-id-' + subIdx, itemId);
-                addSubSessionContent(subKey, {
+                const thinkingItem = {
                   id: itemId, type: 'thinking', content: '', streaming: true,
-                });
+                };
+                addSubSessionContent(subKey, thinkingItem);
+                // S-07: cache for O(1) lookup in thinking_delta / thinking_final
+                const sub = subSessionsRef.current.get(subKey);
+                if (sub) sub._activeThinkingItem = thinkingItem;
               }
               break;
             }
@@ -7603,7 +7614,9 @@
             const subKey = resolveSubSessionKey(msg);
             if (subKey) {
               updateSubSessionContent(subKey, sub => {
-                const item = sub.content.slice().reverse().find(c => c.type === 'thinking' && c.streaming);
+                // S-07: use cached _activeThinkingItem for O(1) lookup
+                const item = sub._activeThinkingItem
+                  || sub.content.findLast(c => c.type === 'thinking' && c.streaming);
                 if (item) item.content += msg.delta;
               });
               break;
@@ -7624,11 +7637,14 @@
             const subKey = resolveSubSessionKey(msg);
             if (subKey) {
               updateSubSessionContent(subKey, sub => {
-                const item = sub.content.slice().reverse().find(c => c.type === 'thinking' && c.streaming);
+                // S-07: use cached _activeThinkingItem for O(1) lookup
+                const item = sub._activeThinkingItem
+                  || sub.content.findLast(c => c.type === 'thinking' && c.streaming);
                 if (item) {
                   item.content = msg.content;
                   item.streaming = false;
                 }
+                sub._activeThinkingItem = null;
               });
               break;
             }
@@ -7813,7 +7829,7 @@
             const buffered = pendingChildEventsRef.current.get(childId);
             pendingChildEventsRef.current.delete(childId);
             for (const bufferedMsg of buffered) {
-              handleWsMessage(bufferedMsg);
+              handleWsMessage(bufferedMsg, ownerKey);
             }
           }
 
@@ -9141,6 +9157,13 @@
     }, []);
 
     const resumeHistorySession = useCallback((key) => {
+      // Cancel any active countdown on the current session before we do
+      // anything else. Call-site contract: callers (e.g. switchSession) may
+      // already call cancelCountdown before delegating here, but doing it
+      // again is safe (idempotent) and guards against direct callers that
+      // don't go through switchSession.
+      cancelCountdown(activeKeyRef.current);
+
       // Fall back to sessionsRef when React state hasn't batched yet
       // (same race condition as switchSession — see comment there).
       const target = sessions.get(key) || sessionsRef.current.get(key);
@@ -9458,11 +9481,11 @@
             savedTurnCount: turnCountRef.current,
             savedPlaceholderId: placeholderIdRef.current,
             savedBlockMap: { ...blockMapRef.current },
+            savedToolMap: { ...toolMapRef.current },
           });
           return next;
         });
       }
-      activeKeyRef.current = key;
 
       // Load target session
       const targetItems = target.savedItems || [];
@@ -9490,6 +9513,7 @@
       // Restore blockMapRef so queued content_delta/content_end events can
       // find their target items during replay.
       blockMapRef.current = target.savedBlockMap || {};
+      toolMapRef.current = target.savedToolMap || {};
       resetSubSessionState();
       cycleRef.current = 0;
       localIndexRef.current = 0;
@@ -9769,29 +9793,17 @@
         .filter(([, s]) => s && s.sessionId && pinnedSessionIds.has(s.sessionId))
         .map(([key]) => key);
       const pinnedSet = new Set(pinnedKeys);
-      let orderedKeys;
+      let groupKeys;
       if (sessionGroupMode === 'project') {
-        const dirKeys = directoryGroups.flatMap(g =>
-          g.items.map(([key]) => key).filter(k => !pinnedSet.has(k))
-        );
-        orderedKeys = [...pinnedKeys, ...dirKeys];
+        groupKeys = directoryGroups.flatMap(g => g.items.map(([key]) => key));
       } else if (sessionGroupMode === 'activity') {
-        const groupKeys = activityGroups.flatMap(g =>
-          g.items.map(([key]) => key).filter(k => !pinnedSet.has(k))
-        );
-        orderedKeys = [...pinnedKeys, ...groupKeys];
+        groupKeys = activityGroups.flatMap(g => g.items.map(([key]) => key));
       } else if (sessionGroupMode === 'age') {
-        const groupKeys = ageGroups.flatMap(g =>
-          g.items.map(([key]) => key).filter(k => !pinnedSet.has(k))
-        );
-        orderedKeys = [...pinnedKeys, ...groupKeys];
+        groupKeys = ageGroups.flatMap(g => g.items.map(([key]) => key));
       } else {
-        const unpinnedKeys = rootSessionEntries
-          .filter(([, s]) => !s || !s.sessionId || !pinnedSessionIds.has(s.sessionId))
-          .map(([key]) => key);
-        orderedKeys = [...pinnedKeys, ...unpinnedKeys];
+        groupKeys = rootSessionEntries.map(([key]) => key);
       }
-      visibleSessionKeysRef.current = orderedKeys;
+      visibleSessionKeysRef.current = [...pinnedKeys, ...groupKeys.filter(k => !pinnedSet.has(k))];
     }
     const hasSessionFilter = !!sessionFilterQuery.trim();
     const hasSessionResults = filteredSessionEntries.length > 0;
@@ -10129,8 +10141,8 @@
           handler: () => {
             if (sessionIdRef.current) {
               const isPinned = cmdCtxRef.current.pinnedSessionIds.has(sessionIdRef.current);
-              handleTogglePin(sessionIdRef.current, isPinned);
-              showToast(isPinned ? 'Session unpinned' : 'Session pinned');
+              handleTogglePin(sessionIdRef.current, isPinned)
+                .then(() => showToast(isPinned ? 'Session unpinned' : 'Session pinned'));
             }
           },
         },
