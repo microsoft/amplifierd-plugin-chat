@@ -40,7 +40,7 @@ TRANSCRIPT_FILENAME = "transcript.jsonl"
 METADATA_FILENAME = "metadata.json"
 SESSION_INFO_FILENAME = "session-info.json"
 
-_VALID_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_:\-]+$")
+VALID_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 def _decode_cwd(slug: str) -> str:
@@ -122,7 +122,7 @@ def _read_session_meta(
             if (
                 isinstance(raw_parent, str)
                 and raw_parent
-                and _VALID_SESSION_ID_RE.fullmatch(raw_parent)
+                and VALID_SESSION_ID_RE.fullmatch(raw_parent)
             ):
                 parent_session_id = raw_parent
             raw_agent = metadata.get("agent_name")
@@ -239,7 +239,7 @@ def _iter_session_dirs(projects_dir: Path) -> Iterator[tuple[Path, str]]:
             for session_dir in sessions_subdir.iterdir():
                 if not session_dir.is_dir():
                     continue
-                if not _VALID_SESSION_ID_RE.match(session_dir.name):
+                if not VALID_SESSION_ID_RE.fullmatch(session_dir.name):
                     logger.debug(
                         "Skipping session dir with non-standard name: %r",
                         session_dir.name,
@@ -446,7 +446,7 @@ def _read_session_meta_light(
             if (
                 isinstance(raw_parent, str)
                 and raw_parent
-                and _VALID_SESSION_ID_RE.fullmatch(raw_parent)
+                and VALID_SESSION_ID_RE.fullmatch(raw_parent)
             ):
                 parent_session_id = raw_parent
             raw_agent = metadata.get("agent_name")

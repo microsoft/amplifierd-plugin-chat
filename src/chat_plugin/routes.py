@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -11,14 +10,13 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from chat_plugin.commands import CommandProcessor
 from chat_plugin.pin_storage import PinStorage
 from chat_plugin.session_history import (
+    VALID_SESSION_ID_RE,
     scan_session_revisions,
     scan_sessions,
     search_sessions,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
-
-_VALID_SESSION_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 def _parse_session_id_set(values: list[str]) -> set[str]:
@@ -28,7 +26,7 @@ def _parse_session_id_set(values: list[str]) -> set[str]:
         session_id = (raw or "").strip()
         if not session_id:
             continue
-        if not _VALID_SESSION_ID.fullmatch(session_id):
+        if not VALID_SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid session ID format: {session_id!r}",
@@ -61,14 +59,14 @@ def create_pin_routes(pin_storage: PinStorage) -> APIRouter:
 
     @router.post("/api/sessions/{session_id}/pin")
     async def pin_session_api(session_id: str):
-        if not _VALID_SESSION_ID.fullmatch(session_id):
+        if not VALID_SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID")
         pin_storage.add(session_id)
         return {"status": "pinned", "session_id": session_id}
 
     @router.delete("/api/sessions/{session_id}/pin")
     async def unpin_session_api(session_id: str):
-        if not _VALID_SESSION_ID.fullmatch(session_id):
+        if not VALID_SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID")
         pin_storage.remove(session_id)
         return {"status": "unpinned", "session_id": session_id}
@@ -381,7 +379,7 @@ def create_fork_routes(
         turn: int = Query(..., ge=1),
     ) -> dict:
         """Return a lightweight preview of what a fork at *turn* would produce."""
-        if not _VALID_SESSION_ID.fullmatch(session_id):
+        if not VALID_SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID")
         session_dir = _find_session_dir(session_id)
         try:
@@ -400,7 +398,7 @@ def create_fork_routes(
     @router.post("/api/sessions/{session_id}/fork")
     async def do_fork_session(session_id: str, request: Request) -> dict:
         """Execute a fork at the given turn and return the new session info."""
-        if not _VALID_SESSION_ID.fullmatch(session_id):
+        if not VALID_SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID")
         raw = await request.body()
         if not raw:
