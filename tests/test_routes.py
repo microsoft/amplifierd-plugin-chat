@@ -249,6 +249,51 @@ def test_history_no_ensure_ids_on_later_pages(client, tmp_path, state):
     assert len(data["sessions"]) <= 1
 
 
+def test_search_results_include_pinned_flag(client, tmp_path, state):
+    """S-21: Search results must include a 'pinned' boolean flag."""
+    import json
+
+    state.settings.projects_dir = tmp_path
+
+    # Create two sessions with searchable content
+    for name in ["sess-pinned", "sess-unpinned"]:
+        sess_dir = tmp_path / "-Users-test" / "sessions" / name
+        sess_dir.mkdir(parents=True, exist_ok=True)
+        (sess_dir / "transcript.jsonl").write_text(
+            json.dumps({"role": "user", "content": "searchable content"}) + "\n",
+            encoding="utf-8",
+        )
+        (sess_dir / "metadata.json").write_text(
+            json.dumps({"name": f"Session {name}"}),
+            encoding="utf-8",
+        )
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from chat_plugin import create_router
+
+    app = FastAPI()
+    router = create_router(state)
+    app.include_router(router)
+    c = TestClient(app)
+
+    # Pin one session
+    c.post("/chat/api/sessions/sess-pinned/pin")
+
+    # Search for both (query matches session name metadata, not transcript)
+    resp = c.get("/chat/api/sessions/search?q=Session")
+    assert resp.status_code == 200
+    data = resp.json()
+    sessions = data["sessions"]
+    assert len(sessions) >= 2
+
+    pinned_row = next(s for s in sessions if s["session_id"] == "sess-pinned")
+    unpinned_row = next(s for s in sessions if s["session_id"] == "sess-unpinned")
+
+    assert pinned_row["pinned"] is True, "Pinned session should have pinned=True"
+    assert unpinned_row["pinned"] is False, "Unpinned session should have pinned=False"
+
+
 def test_hidden_sessions_excluded_from_history(client, tmp_path, state):
     import json
 

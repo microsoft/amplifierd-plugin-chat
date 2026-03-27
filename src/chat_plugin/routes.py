@@ -139,6 +139,9 @@ def create_history_routes(
             ) and not row.get("hidden")
 
         results = [row for row in results if _has_content(row)]
+        pinned_ids = pin_storage.list_pins()
+        for row in results:
+            row["pinned"] = row["session_id"] in pinned_ids
         return {"sessions": results, "query": q}
 
     @router.get("/api/sessions/revisions")
