@@ -298,6 +298,8 @@ def create_command_routes(processor: CommandProcessor) -> APIRouter:
     @router.post("/command")
     async def dispatch_command(body: dict):
         session_id = body.get("session_id")
+        if session_id is not None and not VALID_SESSION_ID_RE.fullmatch(session_id):
+            raise HTTPException(status_code=400, detail="Invalid session ID")
         text = body.get("command", body.get("text", ""))
         action, data = processor.process_input(text)
         if action == "command":

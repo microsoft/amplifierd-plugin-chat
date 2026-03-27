@@ -14,7 +14,9 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from chat_plugin.session_history import VALID_SESSION_ID_RE
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 class AnalyzeRequest(BaseModel):
     session_id: str
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, v: str) -> str:
+        if not VALID_SESSION_ID_RE.fullmatch(v):
+            raise ValueError("Invalid session ID")
+        return v
 
 
 class AnalyzeResponse(BaseModel):
