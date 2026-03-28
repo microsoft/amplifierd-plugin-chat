@@ -37,8 +37,7 @@ class ThreadedToolWrapper:
         tool = object.__getattribute__(self, "_tool")
         coro = tool.execute(input)
         log.debug("ThreadedToolWrapper: dispatching %s.execute to thread pool", tool)
-        result = await asyncio.to_thread(asyncio.run, coro)
-        return result
+        return await asyncio.to_thread(asyncio.run, coro)
 
     def __getattr__(self, name: str) -> Any:
         tool = object.__getattribute__(self, "_tool")

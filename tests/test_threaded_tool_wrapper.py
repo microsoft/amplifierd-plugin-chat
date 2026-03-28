@@ -7,13 +7,13 @@ from typing import Any
 
 import pytest
 
+from amplifierd.threading import ThreadedToolWrapper, wrap_tools_for_threading
+
 
 class TestThreadedToolWrapperImport:
     """Verify the module and its exports are importable."""
 
     def test_imports_cleanly(self):
-        from amplifierd.threading import ThreadedToolWrapper, wrap_tools_for_threading  # noqa: F401
-
         assert ThreadedToolWrapper is not None
         assert wrap_tools_for_threading is not None
 
@@ -34,16 +34,12 @@ class TestThreadedToolWrapper:
         return MockTool()
 
     def test_init_stores_tool(self):
-        from amplifierd.threading import ThreadedToolWrapper
-
         tool = self._make_tool()
         wrapper = ThreadedToolWrapper(tool)
         # The wrapper should store the underlying tool
         assert wrapper._tool is tool
 
     def test_getattr_proxies_to_tool(self):
-        from amplifierd.threading import ThreadedToolWrapper
-
         tool = self._make_tool()
         wrapper = ThreadedToolWrapper(tool)
         # Should proxy attribute access to underlying tool
@@ -51,8 +47,6 @@ class TestThreadedToolWrapper:
         assert wrapper.description == "A mock tool for testing"
 
     def test_repr_includes_tool_info(self):
-        from amplifierd.threading import ThreadedToolWrapper
-
         tool = self._make_tool()
         wrapper = ThreadedToolWrapper(tool)
         r = repr(wrapper)
@@ -61,8 +55,6 @@ class TestThreadedToolWrapper:
     @pytest.mark.asyncio
     async def test_execute_runs_tool_off_event_loop(self):
         """execute() should run the tool's coroutine in a thread via asyncio.to_thread."""
-        from amplifierd.threading import ThreadedToolWrapper
-
         tool = self._make_tool(return_value="thread_result")
         wrapper = ThreadedToolWrapper(tool)
         result = await wrapper.execute("test_input")
@@ -71,29 +63,25 @@ class TestThreadedToolWrapper:
     @pytest.mark.asyncio
     async def test_execute_uses_double_loop_pattern(self):
         """The coroutine is created eagerly on main thread and run in thread pool."""
-        from amplifierd.threading import ThreadedToolWrapper
-
         execution_loop = None
 
         class LoopCapturingTool:
             async def execute(self, input):
                 nonlocal execution_loop
                 # asyncio.run() creates a new event loop in the worker thread
-                # so get_event_loop should return a DIFFERENT loop than the main one
-                execution_loop = asyncio.get_event_loop()
+                # so get_running_loop should return a DIFFERENT loop than the main one
+                execution_loop = asyncio.get_running_loop()
                 return "done"
 
         tool = LoopCapturingTool()
         wrapper = ThreadedToolWrapper(tool)
-        main_loop = asyncio.get_event_loop()
+        main_loop = asyncio.get_running_loop()
         await wrapper.execute("input")
         # The tool should have run in a different event loop (thread's loop)
         assert execution_loop is not main_loop
 
     @pytest.mark.asyncio
     async def test_execute_with_none_input(self):
-        from amplifierd.threading import ThreadedToolWrapper
-
         tool = self._make_tool(return_value=None)
         wrapper = ThreadedToolWrapper(tool)
         result = await wrapper.execute(None)
@@ -120,8 +108,6 @@ class TestWrapToolsForThreading:
         return session
 
     def test_wraps_all_tools(self):
-        from amplifierd.threading import ThreadedToolWrapper, wrap_tools_for_threading
-
         class FakeTool:
             async def execute(self, input):
                 return "ok"
@@ -135,8 +121,6 @@ class TestWrapToolsForThreading:
             assert isinstance(w, ThreadedToolWrapper)
 
     def test_no_coordinator_is_safe(self):
-        from amplifierd.threading import wrap_tools_for_threading
-
         class FakeSession:
             pass  # No coordinator attribute
 
@@ -145,8 +129,6 @@ class TestWrapToolsForThreading:
         wrap_tools_for_threading(session)
 
     def test_none_coordinator_is_safe(self):
-        from amplifierd.threading import wrap_tools_for_threading
-
         class FakeSession:
             coordinator = None
 
@@ -155,15 +137,13 @@ class TestWrapToolsForThreading:
         wrap_tools_for_threading(session)
 
     def test_empty_tools_list(self):
-        from amplifierd.threading import wrap_tools_for_threading
-
+        # The `if not tools` guard fires for an empty list and returns early,
+        # leaving the "tools" key untouched — intentional no-op for empty list.
         session = self._make_session_with_tools([])
         wrap_tools_for_threading(session)
         assert session.coordinator["tools"] == []
 
     def test_tools_key_missing_is_safe(self):
-        from amplifierd.threading import wrap_tools_for_threading
-
         class FakeCoordinator(dict):
             pass
 
