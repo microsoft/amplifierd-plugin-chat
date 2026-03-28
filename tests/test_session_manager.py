@@ -219,3 +219,51 @@ class TestWrapToolsForThreadingCalledInCreate:
         assert call_order.index("wrap") < call_order.index("register"), (
             "wrap_tools_for_threading must be called before register()"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestResumePassesSessionCwd
+# ---------------------------------------------------------------------------
+
+
+class TestResumePassesSessionCwd:
+    """resume() must call wrap_tools_for_threading(session) after create_session."""
+
+    @staticmethod
+    async def _fake_to_thread(fn, *args, **kwargs):
+        """Drop-in replacement for asyncio.to_thread that calls fn synchronously."""
+        return fn(*args, **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_resume_calls_wrap_tools_for_threading(self, tmp_path):
+        """resume() calls wrap_tools_for_threading(session) after create_session."""
+        sm = _make_session_manager(projects_dir=tmp_path)
+        session = _make_fake_session("sess-resume-001")
+        # Ensure coordinator.get returns None so context-injection block is skipped
+        session.coordinator.get.return_value = None
+        prepared = _make_prepared(session)
+        sm.set_prepared_bundle("my-bundle", prepared)
+
+        session_dir = tmp_path / "proj" / "sessions" / "sess-resume-001"
+        session_dir.mkdir(parents=True)
+
+        working_dir = str(tmp_path / "work")
+
+        with (
+            patch.object(sm, "_find_session_dir", return_value=session_dir),
+            patch("amplifierd.persistence.load_transcript", return_value=[]),
+            patch(
+                "amplifierd.persistence.load_metadata",
+                return_value={"bundle": "my-bundle", "working_dir": working_dir},
+            ),
+            patch("asyncio.to_thread", new=self._fake_to_thread),
+            patch("amplifierd.persistence.register_persistence_hooks"),
+            patch(
+                "amplifierd.spawn.register_spawn_capability", side_effect=ImportError
+            ),
+            patch("amplifierd.threading.wrap_tools_for_threading") as mock_wrap,
+        ):
+            handle = await sm.resume("sess-resume-001")
+
+        mock_wrap.assert_called_once_with(session)
+        assert handle.session_id == session.session_id

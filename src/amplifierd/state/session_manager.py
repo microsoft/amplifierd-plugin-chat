@@ -115,7 +115,9 @@ class SessionManager:
         if self._index:
             entry = self._index.get(session_id)
             if entry and entry.project_id:
-                candidate = self._projects_dir / entry.project_id / "sessions" / session_id
+                candidate = (
+                    self._projects_dir / entry.project_id / "sessions" / session_id
+                )
                 if candidate.exists():
                     return candidate
 
@@ -349,7 +351,9 @@ class SessionManager:
             return existing
 
         if not self._projects_dir:
-            raise ValueError("Session persistence not configured (projects_dir is None)")
+            raise ValueError(
+                "Session persistence not configured (projects_dir is None)"
+            )
         if not self._bundle_registry:
             raise RuntimeError("BundleRegistry not available")
 
@@ -421,6 +425,11 @@ class SessionManager:
             session_cwd=Path(working_dir),
         )
 
+        # Wrap tools to run execute() off the event loop (prevents blocking SSE)
+        from amplifierd.threading import wrap_tools_for_threading
+
+        wrap_tools_for_threading(session)
+
         # 5. Inject transcript into context (preserving system prompt)
         context = session.coordinator.get("context")
         if context and hasattr(context, "set_messages"):
@@ -440,7 +449,11 @@ class SessionManager:
         register_persistence_hooks(session, session_dir)
 
         # Determine project_id for index entry
-        project_id = session_dir.parent.parent.name if session_dir.parent.name == "sessions" else ""
+        project_id = (
+            session_dir.parent.parent.name
+            if session_dir.parent.name == "sessions"
+            else ""
+        )
 
         # 7. Register in SessionManager
         handle = self.register(
@@ -492,4 +505,6 @@ class SessionManager:
             try:
                 await self.destroy(sid)
             except Exception as exc:
-                logger.warning("Error destroying session %s during shutdown: %s", sid, exc)
+                logger.warning(
+                    "Error destroying session %s during shutdown: %s", sid, exc
+                )
