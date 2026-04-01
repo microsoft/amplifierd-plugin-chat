@@ -6602,6 +6602,14 @@
         if (!res.ok) return;
         const data = await res.json();
         setDynamicShortcuts({ modes: data.modes || [], skills: data.skills || [] });
+        // Sync active mode from backend (source of truth for per-session mode state).
+        // This ensures the mode banner reflects the target session after switches.
+        if (data.active_mode) {
+          const modeInfo = (data.modes || []).find(m => m.name === data.active_mode);
+          setActiveMode({ name: data.active_mode, description: modeInfo?.description || '' });
+        } else {
+          setActiveMode(null);
+        }
       } catch (e) { /* silent */ }
     }, []);
 
@@ -7924,6 +7932,10 @@
               ? { ...item, toolStatus: msg.success ? 'complete' : 'error', result: msg.output, resultError: msg.error }
               : item
           ));
+          // When the agent uses the mode tool, re-sync mode banner from backend.
+          if (msg.tool_name === 'mode' && sessionIdRef.current) {
+            fetchShortcuts(sessionIdRef.current);
+          }
           break;
         }
 
@@ -9359,6 +9371,8 @@
             ...cur,
             savedItems: chronoItemsRef.current,
             savedTurnCount: turnCountRef.current,
+            savedActiveMode: activeMode,
+            savedDynamicShortcuts: dynamicShortcuts,
           });
           return next;
         });
@@ -9370,6 +9384,8 @@
       setChronoItems([]);
       orderCounterRef.current = 0;
       setTurnCount(0);
+      // New sessions have no active mode - clear the banner.
+      setActiveMode(null);
       setHoveredTurnId(null);
       setActiveTurnId(null);
       setSelectedTurnId(null);
@@ -9441,6 +9457,8 @@
             ...cur,
             savedItems: chronoItemsRef.current,
             savedTurnCount: turnCountRef.current,
+            savedActiveMode: activeMode,
+            savedDynamicShortcuts: dynamicShortcuts,
           });
           return next;
         });
@@ -9451,6 +9469,10 @@
       setMobileSidebarOpen(false);
       setExecuting(false);
       setPendingApproval(null);
+      // Restore saved mode for instant UI (no flash); fetchShortcuts will
+      // reconcile with the backend once the session is resumed.
+      setActiveMode(target.savedActiveMode || null);
+      setDynamicShortcuts(target.savedDynamicShortcuts || { modes: [], skills: [] });
       setHoveredTurnId(null);
       setActiveTurnId(null);
       setSelectedTurnId(null);
