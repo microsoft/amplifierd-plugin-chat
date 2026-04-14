@@ -95,7 +95,9 @@ def wrap_tools_for_threading(session: Any) -> None:
 
     get_fn = getattr(coordinator, "get", None)
     if get_fn is None or not callable(get_fn):
-        log.debug("wrap_tools_for_threading: coordinator has no .get() method, skipping")
+        log.debug(
+            "wrap_tools_for_threading: coordinator has no .get() method, skipping"
+        )
         return
 
     tools: Any = get_fn("tools")
