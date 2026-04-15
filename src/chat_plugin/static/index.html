@@ -3943,7 +3943,7 @@
       try {
         const data = await api.getTranscript(del.childSessionId);
         const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
-        if (transcript.length === 0) return { del, childItems: null, error: null };
+        if (transcript.length === 0) return { del, childItems: [], error: null };
 
         const childItems = transcriptToChronoItems(transcript);
         return { del, childItems, error: null };
